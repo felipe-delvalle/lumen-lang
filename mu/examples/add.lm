@@ -1,0 +1,3 @@
+# Lumen-mu (integer subset). Expected stdout: "42\n". Multi-arg call.
+fn add(a: Int, b: Int) -> Int { return a + b }
+fn main(console: Console) -> Unit { console.print_int(add(20, 22)) }

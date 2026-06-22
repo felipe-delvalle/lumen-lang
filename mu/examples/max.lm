@@ -1,0 +1,5 @@
+# Lumen-mu (integer subset). Expected stdout: "13\n". if/else with JMP backpatch.
+fn max(a: Int, b: Int) -> Int {
+  if a < b { return b } else { return a }
+}
+fn main(console: Console) -> Unit { console.print_int(max(7, 13)) }
