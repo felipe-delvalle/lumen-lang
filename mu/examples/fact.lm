@@ -1,0 +1,6 @@
+# Lumen-mu (integer subset). Expected stdout: "120\n". Recursion + multiplication.
+fn fact(n: Int) -> Int {
+  if n < 1 { return 1 }
+  return n * fact(n - 1)
+}
+fn main(console: Console) -> Unit { console.print_int(fact(5)) }

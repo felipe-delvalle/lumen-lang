@@ -1,0 +1,13 @@
+# Lumen-mu (integer subset). Conformance: positive. Expected stdout: "55\n".
+# Compiled from SOURCE to IR by lumenc.wat (the stage-0 compiler), then run on the seed VM.
+# console.print_int is the integer-subset Console operation (prints an Int + newline);
+# the full print(Text) + int_to_text arrive with the boxed-value VM increment.
+
+fn fib(n: Int) -> Int {
+  if n < 2 { return n }
+  return fib(n - 1) + fib(n - 2)
+}
+
+fn main(console: Console) -> Unit {
+  console.print_int(fib(10))
+}
