@@ -78,12 +78,16 @@ const tryProg = ab => `type E = | Bad\nfn g(x: Int) -> Result[Int, E] { if x == 
 eq('? unwraps ok', runFull(tryProg('3, 4')), '7\n');
 eq('? propagates err', runFull(tryProg('0, 4')), 'e\n');
 
-// Characterization: a leading (unary) minus is NOT yet a construct. `-1` lexes as '-' then
-// '1', and c_primary has no unary-minus production, so it is reported rather than parsed.
-// Binary subtraction works (see 'sub goes negative'). This pins current behavior; if unary
-// minus is added later, this test fails and should be updated.
-eq('negative literal is unsupported (documents current limitation)',
-  codesOf('fn main(c: Console) -> Unit {\n  c.print_int(-1)\n}\n').length > 0, true);
+// ---- unary minus / negative literals ----
+eq('negative literal',            runMain('c.print_int(-5)'), '-5\n');
+eq('unary minus on a binding',    runMain('let x = 5\n  c.print_int(-x)'), '-5\n');
+eq('negative literal as call arg',
+  runFull('fn id(n: Int) -> Int {\n  return n\n}\nfn main(c: Console) -> Unit {\n  c.print_int(id(-3))\n}\n'), '-3\n');
+eq('double negation',             runMain('c.print_int(- -7)'), '7\n');
+eq('unary minus inside an expression', runMain('c.print_int(10 + -4)'), '6\n');
+eq('unary minus of a parenthesized expr', runMain('c.print_int(-(2 + 3))'), '-5\n');
+eq('binary subtraction still works',   runMain('c.print_int(3 - 7)'), '-4\n');
+eq('subtracting a negative',      runMain('c.print_int(3 - -7)'), '10\n');
 
 // ---- diagnostics: each code, and a clean program ----
 deepEq('E0001 unknown variable', codesOf('fn main(c: Console) -> Unit {\n  c.print_int(zzz)\n}\n'), ['E0001:zzz']);
