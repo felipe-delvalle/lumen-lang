@@ -498,6 +498,13 @@
     (local $off i32) (local $len i32) (local $argc i32) (local $moff i32) (local $mlen i32) (local $slot i32) (local $tag i32)
     (if (call $kw_is (global.get $tp) (i32.const 52160) (i32.const 5))   ;; 'match' expression
       (then (call $c_match) (return)))
+    (if (i32.eq (call $tk (global.get $tp)) (i32.const 11))   ;; unary minus:  -x  ==  0 - x
+      (then
+        (call $adv)
+        (call $emitw (i32.const 1)) (call $emitw (i32.const 0))   ;; PUSH 0
+        (call $c_primary)                                         ;; operand (allows -5, -x, -(e), - -x)
+        (call $emitw (i32.const 4))                               ;; SUB
+        (return)))
     (if (i32.eq (call $tk (global.get $tp)) (i32.const 2))   ;; INT
       (then
         (call $emitw (i32.const 1)) (call $emitw (call $ta (global.get $tp)))
