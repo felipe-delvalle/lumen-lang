@@ -191,15 +191,21 @@
     (global.set $nlocal (i32.add (global.get $nlocal) (i32.const 1))))
   (func $local_find (param $off i32) (param $len i32) (result i32)
     (local $k i32) (local $base i32)
-    (local.set $k (i32.const 0))
+    ;; The locals table is flat and append-only for the whole function (no scope push/pop:
+    ;; see the frame-model comment above, every `let` keeps a permanent slot). So when a name
+    ;; is re-declared in a later sibling branch (e.g. the same `let t` in an `if` and its
+    ;; `else if`), TWO entries share that name. Scan newest-first so a lookup resolves to the
+    ;; nearest preceding declaration, not the oldest one (which may be a sibling branch's
+    ;; stale, never-written-this-call slot).
+    (local.set $k (i32.sub (global.get $nlocal) (i32.const 1)))
     (block $done
       (loop $l
-        (br_if $done (i32.ge_u (local.get $k) (global.get $nlocal)))
+        (br_if $done (i32.lt_s (local.get $k) (i32.const 0)))
         (local.set $base (i32.add (i32.const 51500) (i32.mul (local.get $k) (i32.const 8))))
         (if (call $eqlit (i32.load (local.get $base)) (i32.load (i32.add (local.get $base) (i32.const 4)))
                          (local.get $off) (local.get $len))
           (then (return (local.get $k))))
-        (local.set $k (i32.add (local.get $k) (i32.const 1)))
+        (local.set $k (i32.sub (local.get $k) (i32.const 1)))
         (br $l)))
     (return (i32.const -1)))
   ;; resolve a name to a frame slot: params occupy [0,nparam), locals occupy [nparam, nparam+nlocal)

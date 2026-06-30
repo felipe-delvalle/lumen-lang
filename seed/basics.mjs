@@ -109,6 +109,8 @@ eq('else-if: first branch',  runFull(grade.replace('SCORE', '95')), 'A');
 eq('else-if: middle branch', runFull(grade.replace('SCORE', '85')), 'B');
 eq('else-if: later branch',  runFull(grade.replace('SCORE', '72')), 'C');
 eq('else-if: final else',    runFull(grade.replace('SCORE', '40')), 'F');
+eq('else-if: sibling branches can reuse a let name without reading a stale slot',
+  runFull('fn t(d: Int) -> Int {\n  if d == 1 {\n    let x = 10\n    return x\n  } else if d == 2 {\n    let x = 20\n    return x\n  }\n  return 0\n}\nfn main(c: Console) -> Unit { c.print_int(t(2)) }\n'), '20\n');
 eq('while loop sums 1..5', runMain('var i = 1\n  var s = 0\n  while i <= 5 { s = s + i\n    i = i + 1 }\n  c.print_int(s)'), '15\n');
 
 // ---- functions: recursion, forward reference, multi-arg, mutual recursion ----

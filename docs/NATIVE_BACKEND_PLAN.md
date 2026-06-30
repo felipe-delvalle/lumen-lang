@@ -23,10 +23,14 @@ target on the machine that exists today). Build log: [`../native/HISTORY.md`](..
   via the keystone; length-preserving. Gate (`optimize_diff.mjs`):
   `interpret(optimize(IR))==interpret(IR)` on 11 programs + a synthetic chain (4→6), **12/12**.
 - **Token-cap wall raised** 1600→1665 (region max) to fit v2 — a non-regressing point-3 step.
+- **Fixed: `$local_find` returned the oldest matching local, not the nearest.** A name
+  re-declared in a sibling `if`/`else if` branch (e.g. `let t` in both) resolved reads to the
+  first declaration's slot instead of the current branch's — a real correctness bug, not just
+  the `optimize.lm` workaround that exposed it. `optimize.lm` now uses the natural `else if`
+  form (the workaround is gone).
 - **Not done (honest):** full `lumenc.lm` self-host (multi-week; needs the real token-region
   RESIZE, ~15 interlocking offsets, beyond the 1665 region max); v2 float/heap emit (M2);
-  ditching clang (M4). Also a found seed bug: `if/else-if + trailing statements` miscompiles
-  (Rule-5 hazard, worked around, fix pending).
+  ditching clang (M4).
 
 ## The goal, stated without hedging
 Compile the existing Lumen IR to native machine code that **matches or beats the fastest
