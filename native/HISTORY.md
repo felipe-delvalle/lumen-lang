@@ -10,7 +10,27 @@ bit-identical to it).
 
 ---
 
-## 2026-06-30 (later) — The Lumen optimizer (point 2) + per-function emitter that BEATS C
+## 2026-06-30-1857 — Root-caused and fixed the else-if shadowing bug
+
+Root cause: `$local_find` in `lumenc.wat` scanned the locals table oldest-first and returned
+the first name match. The table is flat and append-only for the whole function (no scope
+push/pop), so a name re-declared in a sibling `if`/`else if` branch (`let t` in both) got a
+second slot via `SETLOCAL`, but every later read resolved via `$local_find` back to the first
+(stale, possibly never-written-this-call) slot instead of the current branch's own. Fixed by
+scanning newest-first. Failing-test-first: `basics.mjs` gained
+"else-if: sibling branches can reuse a let name without reading a stale slot"; confirmed red,
+applied the fix, confirmed green. Full suite (102/102 + 18/18 + 7/7 + 13/13) and perf gate
+hold (100-102% of baseline).
+
+Dogfooded immediately: `optimize.lm`'s `is_jump` flag-function workaround (forced because this
+bug made the natural `if op==6 {...} else if op==7 {...}` silently thread zero jumps) is
+deleted; `optimize.lm` now uses the natural else-if form the language was always supposed to
+support. Re-gated through the real pipeline (not a standalone script): `optimize_diff.mjs`
+12/12, `native_diff.mjs` 11/11, `native_fn_test.mjs` 11/11 + still beats hand-C.
+
+---
+
+## 2026-06-30-1809 — The Lumen optimizer (point 2) + per-function emitter that BEATS C
 
 ### Landed
 1. **`optimize.lm` — the first Lumen-owned IR optimizer pass (point 2).** Jump-to-jump
@@ -51,7 +71,7 @@ float/heap emit in v2 (M2); ditching clang (M4). Reference oracle stays the inte
 
 ---
 
-## 2026-06-30 — Keystone + the first Lumen-owned native wedge (scalar core)
+## 2026-06-30-1709 — Keystone + the first Lumen-owned native wedge (scalar core)
 
 **Question that drove it:** "Can Lumen translate itself into a native binary — run by Lumen,
 no 3rd language?" Answer: yes, and this is the first working, gated proof.
