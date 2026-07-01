@@ -24,14 +24,18 @@
 ;;   [11264 .. 11328)  itoa text buffer (ANCHOR 11326)
 ;;   [11328 .. 100000) CODE (emitted IR words; ~2167)
 ;;   [100000 .. 150000) SRC (source bytes, host-written; 10 KB)
-;;   [150000 .. 246000) TOKENS (kind:i32, a:i32, b:i32) = 12 bytes each (~8000)
-;;   [246000 .. 247000) SYMBOLS (name_off, name_len, entry) = 12 bytes each (~83 fns)
-;;   [247000 .. 247500) PARAMS of current fn (name_off, name_len) = 8 bytes each (~62)
-;;   [247500 .. 248000) LOCALS of current fn (name_off, name_len) = 8 bytes each (~62)
+;;   [150000 .. 157000) SYMBOLS (name_off, name_len, entry) = 12 bytes each (~583 fns)
+;;   [157000 .. 157500) PARAMS of current fn (name_off, name_len) = 8 bytes each (~62)
+;;   [157500 .. 158000) LOCALS of current fn (name_off, name_len) = 8 bytes each (~62)
 ;;   [248000 .. 248400] keyword literals (data) + nvariant table
 ;;   [249000 .. 286000) call-target FIXUPS (code_pos, name_off, name_len) = 12 bytes each
 ;;   [286000 .. 296000) DIAG: compile-error records (code, name_off, name_len) = 12 bytes each
-;;   [296000 .. )      HEAP: Text objects [len:i32][utf8 bytes]; bump-allocated via $hp.
+;;   [296000 .. 488000) TOKENS (kind:i32, a:i32, b:i32) = 12 bytes each (~16000)
+;;   [488000 .. 524288) HEAP: Text objects [len:i32][utf8 bytes]; bump-allocated via $hp.
+;;                     COUPLING: emit_fn.lm emits LM_CAP_BYTES = 524288 - 488000 = 36288 (the
+;;                     interpreter's exact byte capacity; its halt gate mirrors the unrounded
+;;                     byte cursor). ANY change to the heap base MUST update that constant and
+;;                     re-run native/heapcap_test.mjs (halt-parity gate).
 ;;                     Compile materializes string literals here; run continues above them.
 (module
   (import "lumen" "console_print" (func $console_print (param i32 i32)))
@@ -87,7 +91,7 @@
   (global $nlocal  (mut i32) (i32.const 0))   ;; local (let) count of current fn
   (global $nfixup  (mut i32) (i32.const 0))   ;; pending call-target fixups (forward refs)
   (global $nerr    (mut i32) (i32.const 0))   ;; compile errors (unknown name); records at [90000)
-  (global $hp      (mut i32) (i32.const 296000))   ;; heap bump pointer (Text objects)
+  (global $hp      (mut i32) (i32.const 488000))   ;; heap bump pointer (Text objects)
   (global $main_entry (mut i32) (i32.const 0))
   (global $fuel_max (mut i64) (i64.const 4000000000))   ;; SAFETY: interpreter step cap (overridable via set_fuel_max)
   (global $nvariant (mut i32) (i32.const 0))   ;; sum-type variants; table at [52400), 12 bytes (name_off, name_len, tag)
@@ -127,16 +131,16 @@
   ;; past the token region (which would be an out-of-bounds read).
   (func $tk (param $i i32) (result i32)
     (if (i32.ge_u (local.get $i) (global.get $ntok)) (then (return (i32.const 14))))
-    (i32.load (i32.add (i32.const 150000) (i32.mul (local.get $i) (i32.const 12)))))
+    (i32.load (i32.add (i32.const 296000) (i32.mul (local.get $i) (i32.const 12)))))
   (func $ta (param $i i32) (result i32)
     (if (i32.ge_u (local.get $i) (global.get $ntok)) (then (return (i32.const 0))))
-    (i32.load (i32.add (i32.add (i32.const 150000) (i32.mul (local.get $i) (i32.const 12))) (i32.const 4))))
+    (i32.load (i32.add (i32.add (i32.const 296000) (i32.mul (local.get $i) (i32.const 12))) (i32.const 4))))
   (func $tb (param $i i32) (result i32)
     (if (i32.ge_u (local.get $i) (global.get $ntok)) (then (return (i32.const 0))))
-    (i32.load (i32.add (i32.add (i32.const 150000) (i32.mul (local.get $i) (i32.const 12))) (i32.const 8))))
+    (i32.load (i32.add (i32.add (i32.const 296000) (i32.mul (local.get $i) (i32.const 12))) (i32.const 8))))
   (func $tokset (param $i i32) (param $k i32) (param $a i32) (param $bb i32)
     (local $base i32)
-    (local.set $base (i32.add (i32.const 150000) (i32.mul (local.get $i) (i32.const 12))))
+    (local.set $base (i32.add (i32.const 296000) (i32.mul (local.get $i) (i32.const 12))))
     (i32.store (local.get $base) (local.get $k))
     (i32.store (i32.add (local.get $base) (i32.const 4)) (local.get $a))
     (i32.store (i32.add (local.get $base) (i32.const 8)) (local.get $bb)))
@@ -147,7 +151,11 @@
   ;; symbol + param tables
   (func $sym_add (param $off i32) (param $len i32) (param $entry i32)
     (local $base i32)
-    (local.set $base (i32.add (i32.const 246000) (i32.mul (global.get $nsym) (i32.const 12))))
+    (if (i32.ge_u (global.get $nsym) (i32.const 512))
+      (then
+        (call $err_add (i32.const 3) (local.get $off) (local.get $len))
+        (return)))
+    (local.set $base (i32.add (i32.const 150000) (i32.mul (global.get $nsym) (i32.const 12))))
     (i32.store (local.get $base) (local.get $off))
     (i32.store (i32.add (local.get $base) (i32.const 4)) (local.get $len))
     (i32.store (i32.add (local.get $base) (i32.const 8)) (local.get $entry))
@@ -158,7 +166,7 @@
     (block $done
       (loop $l
         (br_if $done (i32.ge_u (local.get $k) (global.get $nsym)))
-        (local.set $base (i32.add (i32.const 246000) (i32.mul (local.get $k) (i32.const 12))))
+        (local.set $base (i32.add (i32.const 150000) (i32.mul (local.get $k) (i32.const 12))))
         (if (call $eqlit (i32.load (local.get $base)) (i32.load (i32.add (local.get $base) (i32.const 4)))
                          (local.get $off) (local.get $len))
           (then (return (i32.load (i32.add (local.get $base) (i32.const 8))))))
@@ -167,7 +175,7 @@
     (return (i32.const -1)))
   (func $param_add (param $off i32) (param $len i32)
     (local $base i32)
-    (local.set $base (i32.add (i32.const 247000) (i32.mul (global.get $nparam) (i32.const 8))))
+    (local.set $base (i32.add (i32.const 157000) (i32.mul (global.get $nparam) (i32.const 8))))
     (i32.store (local.get $base) (local.get $off))
     (i32.store (i32.add (local.get $base) (i32.const 4)) (local.get $len))
     (global.set $nparam (i32.add (global.get $nparam) (i32.const 1))))
@@ -177,7 +185,7 @@
     (block $done
       (loop $l
         (br_if $done (i32.ge_u (local.get $k) (global.get $nparam)))
-        (local.set $base (i32.add (i32.const 247000) (i32.mul (local.get $k) (i32.const 8))))
+        (local.set $base (i32.add (i32.const 157000) (i32.mul (local.get $k) (i32.const 8))))
         (if (call $eqlit (i32.load (local.get $base)) (i32.load (i32.add (local.get $base) (i32.const 4)))
                          (local.get $off) (local.get $len))
           (then (return (local.get $k))))
@@ -185,10 +193,10 @@
         (br $l)))
     (return (i32.const -1)))
 
-  ;; locals (let bindings) table at [51500 .. 52000), 8 bytes each (name_off, name_len)
+  ;; locals (let bindings) table at [157500 .. 158000), 8 bytes each (name_off, name_len)
   (func $local_add (param $off i32) (param $len i32)
     (local $base i32)
-    (local.set $base (i32.add (i32.const 247500) (i32.mul (global.get $nlocal) (i32.const 8))))
+    (local.set $base (i32.add (i32.const 157500) (i32.mul (global.get $nlocal) (i32.const 8))))
     (i32.store (local.get $base) (local.get $off))
     (i32.store (i32.add (local.get $base) (i32.const 4)) (local.get $len))
     (global.set $nlocal (i32.add (global.get $nlocal) (i32.const 1))))
@@ -204,7 +212,7 @@
     (block $done
       (loop $l
         (br_if $done (i32.lt_s (local.get $k) (i32.const 0)))
-        (local.set $base (i32.add (i32.const 247500) (i32.mul (local.get $k) (i32.const 8))))
+        (local.set $base (i32.add (i32.const 157500) (i32.mul (local.get $k) (i32.const 8))))
         (if (call $eqlit (i32.load (local.get $base)) (i32.load (i32.add (local.get $base) (i32.const 4)))
                          (local.get $off) (local.get $len))
           (then (return (local.get $k))))
@@ -269,7 +277,7 @@
     (block $done
       (loop $l
         (br_if $done (i32.ge_u (local.get $k) (global.get $nsym)))
-        (local.set $base (i32.add (i32.const 246000) (i32.mul (local.get $k) (i32.const 12))))
+        (local.set $base (i32.add (i32.const 150000) (i32.mul (local.get $k) (i32.const 12))))
         (if (call $eqlit (i32.load (local.get $base)) (i32.load (i32.add (local.get $base) (i32.const 4)))
                          (local.get $off) (local.get $len))
           (then (return (i32.load (i32.add (i32.const 526336) (i32.mul (local.get $k) (i32.const 4)))))))
@@ -499,7 +507,10 @@
     (local.set $i (i32.const 0)) (local.set $n (i32.const 0))
     (block $end
       (loop $L
-        (br_if $end (i32.ge_u (local.get $n) (i32.const 7999)))   ;; SAFETY: token-capacity guard (region [30000,126000) holds 8000; index 7998 ends at 245976 < SYMBOLS@246000)
+        (if (i32.ge_u (local.get $n) (i32.const 16000))
+          (then
+            (call $err_add (i32.const 3) (local.get $i) (i32.const 1))
+            (br $end)))   ;; SAFETY: token-capacity guard (region [296000,488000) holds 16000; index 15999 ends at 487988 < HEAP@488000)
         ;; skip whitespace and comments
         (block $skipped
           (loop $sk
@@ -1577,7 +1588,7 @@
   (func $lex_compile (param $srclen i32) (result i32)
     (global.set $emit (i32.const 0)) (global.set $nsym (i32.const 0))
     (global.set $nfixup (i32.const 0)) (global.set $nerr (i32.const 0)) (global.set $main_entry (i32.const 0))
-    (global.set $hp (i32.const 296000))   ;; literals materialize from here; run continues above them
+    (global.set $hp (i32.const 488000))   ;; literals materialize from here; run continues above them
     (global.set $nfield (i32.const 0)) (global.set $nrec (i32.const 0))   ;; record field/type registries
     (global.set $nvariant (i32.const 0))   ;; built-in Result variants: ok=tag 0, err=tag 1
     (call $variant_add (i32.const 248180) (i32.const 2) (i32.const 0))

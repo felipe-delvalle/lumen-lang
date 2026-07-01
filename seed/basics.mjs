@@ -228,5 +228,36 @@ fn main(c: Console) -> Unit {
 }
 `), '99\n');
 
+// ---- symbol table overflow ----
+{
+  let symSrc = '';
+  for (let i = 0; i < 90; i++) symSrc += `fn f${i}(c: Console) -> Unit {}\n`;
+  symSrc += 'fn main(c: Console) -> Unit {\n';
+  for (let i = 0; i < 90; i++) symSrc += `  f${i}(c)\n`;
+  symSrc += '}\n';
+  deepEq('symbol overflow (90 functions) compiles clean', L.compile(symSrc).rawDiags.length, 0);
+}
+{
+  let symSrcOver = '';
+  for (let i = 0; i < 513; i++) symSrcOver += `fn f${i}(c: Console) -> Unit {}\n`;
+  symSrcOver += 'fn main(c: Console) -> Unit {\n';
+  symSrcOver += '}\n';
+  eq('symbol overflow new guard', codesOf(symSrcOver)[0], 'E0003:f512');
+}
+
+// ---- token capacity ----
+{
+  let tokSrc = 'fn main(c: Console) -> Unit {\n';
+  for (let i = 0; i < 1333; i++) tokSrc += '  c.print_int(1)\n';
+  tokSrc += '}\n';
+  deepEq('token capacity (8000 tokens) compiles clean', L.compile(tokSrc).rawDiags.length, 0);
+}
+{
+  let tokSrcOver = 'fn main(c: Console) -> Unit {\n';
+  for (let i = 0; i < 2670; i++) tokSrcOver += '  c.print_int(1)\n';
+  tokSrcOver += '}\n';
+  eq('token capacity new guard', codesOf(tokSrcOver)[0], 'E0003');
+}
+
 console.log(`\n${pass}/${total} basics checks passed.`);
 process.exit(pass === total ? 0 : 1);
