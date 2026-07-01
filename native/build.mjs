@@ -107,78 +107,9 @@ async function emitWith(emitterSrc, words, main, strings = []) {
   I.resetOut();
   if (I.ex.set_fuel_max) I.ex.set_fuel_max(4000000000n);
   I.ex.run(I.ex.dbg_main());
-  const { C_HEADER } = await import('./native_float_test_header.mjs');
-  const RUNTIME = `
-static int64_t lm_alloc_bytes(int64_t num_bytes) {
-  int64_t words = (num_bytes + 7) / 8;
-  if (AHP + words > AHEAP_CAP) { fflush(stdout); exit(0); }
-  int64_t h = AHP;
-  for (int64_t i = 0; i < words; i++) AHEAP[h + i] = 0;
-  AHP += words;
-  return (int64_t)&AHEAP[h];
-}
-static int64_t lm_alloc_sum(int64_t tag, int64_t payload) {
-  if (AHP + 2 > AHEAP_CAP) { fflush(stdout); exit(0); }
-  int64_t h = AHP;
-  AHEAP[h] = tag;
-  AHEAP[h+1] = payload;
-  AHP += 2;
-  return (int64_t)&AHEAP[h];
-}
-static int64_t lm_concat(int64_t pa, int64_t pb) {
-  int32_t la = *(int32_t*)pa;
-  int32_t lb = *(int32_t*)pb;
-  int64_t ptr = lm_alloc_bytes(4 + la + lb);
-  *(int32_t*)ptr = la + lb;
-  memcpy((char*)ptr + 4, (char*)pa + 4, la);
-  memcpy((char*)ptr + 4 + la, (char*)pb + 4, lb);
-  return ptr;
-}
-static int64_t lm_int2text(int64_t val_s) {
-  uint64_t v = (uint64_t)val_s;
-  int32_t neg = 0;
-  if (val_s < 0) {
-    neg = 1;
-    v = 0 - v;
-  }
-  int32_t nd = 1;
-  uint64_t tmp = v;
-  while (1) {
-    tmp = tmp / 10;
-    if (tmp == 0) break;
-    nd++;
-  }
-  int32_t len = nd + neg;
-  int64_t ptr = lm_alloc_bytes(4 + len);
-  *(int32_t*)ptr = len;
-  char* w = (char*)ptr + 4 + len;
-  uint64_t curr = v;
-  while (1) {
-    w--;
-    *w = (char)(48 + (curr % 10));
-    curr = curr / 10;
-    if (curr == 0) break;
-  }
-  if (neg) {
-    *((char*)ptr + 4) = '-';
-  }
-  return ptr;
-}
-static int64_t lm_texteq(int64_t pa, int64_t pb) {
-  if (pa == pb) return 1;
-  if (!pa || !pb) return 0;
-  int32_t la = *(int32_t*)pa;
-  int32_t lb = *(int32_t*)pb;
-  if (la != lb) return 0;
-  return memcmp((char*)pa + 4, (char*)pb + 4, la) == 0 ? 1 : 0;
-}
-static void lm_printtext(int64_t a) {
-  if (!a) return;
-  int32_t len = *(int32_t*)a;
-  fwrite((char*)a + 4, 1, len, stdout);
-}
-`;
-  return C_HEADER + RUNTIME + I.getOut();
+  // emit_fn.lm emits the full C runtime header itself (cruntime-purity round);
+  // the emitter output is a complete translation unit - no JS-side prepends.
+  return I.getOut();
 }
 
 async function main() {
