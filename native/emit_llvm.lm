@@ -5,6 +5,13 @@ fn ir_word(i: Int) -> Int { return load32(hdr() + 8 + i * 4) }
 fn arity_base() -> Int { return 560000 }
 fn arity_of(e: Int) -> Int { return load32(arity_base() + e * 4) }
 
+fn dir_base() -> Int { return hdr() + 8 + ir_len() * 4 }
+fn dir_word_count() -> Int { return load32(dir_base()) }
+fn num_strings() -> Int { return dir_word_count() / 3 }
+fn dir_orig_ptr(i: Int) -> Int { return load32(dir_base() + 4 + i * 12) }
+fn dir_len(i: Int) -> Int { return load32(dir_base() + 4 + i * 12 + 4) }
+fn dir_byte_offset(i: Int) -> Int { return load32(dir_base() + 4 + i * 12 + 8) }
+
 fn oplen(op: Int) -> Int {
   if op == 1 { return 1 }
   if op == 2 { return 1 }
@@ -13,7 +20,71 @@ fn oplen(op: Int) -> Int {
   if op == 8 { return 2 }
   if op == 13 { return 1 }
   if op == 14 { return 1 }
+  if op == 15 { return 1 }
+  if op == 25 { return 1 }
   return 0
+}
+
+fn print_hex_byte(c: Console, b: Int) -> Unit {
+  c.print("\")
+  let h = b / 16
+  if h == 0 { c.print("0") }
+  if h == 1 { c.print("1") }
+  if h == 2 { c.print("2") }
+  if h == 3 { c.print("3") }
+  if h == 4 { c.print("4") }
+  if h == 5 { c.print("5") }
+  if h == 6 { c.print("6") }
+  if h == 7 { c.print("7") }
+  if h == 8 { c.print("8") }
+  if h == 9 { c.print("9") }
+  if h == 10 { c.print("a") }
+  if h == 11 { c.print("b") }
+  if h == 12 { c.print("c") }
+  if h == 13 { c.print("d") }
+  if h == 14 { c.print("e") }
+  if h == 15 { c.print("f") }
+  let l = b % 16
+  if l == 0 { c.print("0") }
+  if l == 1 { c.print("1") }
+  if l == 2 { c.print("2") }
+  if l == 3 { c.print("3") }
+  if l == 4 { c.print("4") }
+  if l == 5 { c.print("5") }
+  if l == 6 { c.print("6") }
+  if l == 7 { c.print("7") }
+  if l == 8 { c.print("8") }
+  if l == 9 { c.print("9") }
+  if l == 10 { c.print("a") }
+  if l == 11 { c.print("b") }
+  if l == 12 { c.print("c") }
+  if l == 13 { c.print("d") }
+  if l == 14 { c.print("e") }
+  if l == 15 { c.print("f") }
+}
+
+fn emit_static_strings(c: Console) -> Unit {
+  let num_str = num_strings()
+  var i = 0
+  while i < num_str {
+    let orig_ptr = dir_orig_ptr(i)
+    let length = dir_len(i)
+    let byte_off = dir_byte_offset(i)
+    c.print("@str_") num(c, orig_ptr) c.print(" = private unnamed_addr constant [") num(c, 4 + length) c.print(" x i8] c")
+    print_quote(c)
+    print_hex_byte(c, length % 256)
+    print_hex_byte(c, (length / 256) % 256)
+    print_hex_byte(c, (length / 65536) % 256)
+    print_hex_byte(c, (length / 16777216) % 256)
+    var j = 0
+    while j < length {
+      print_hex_byte(c, load8(byte_off + j))
+      j = j + 1
+    }
+    print_quote(c)
+    c.print(", align 1\n")
+    i = i + 1
+  }
 }
 
 fn num(c: Console, n: Int) -> Unit { c.print(int_to_text(n)) }
@@ -71,12 +142,16 @@ fn oplen_d_change(op: Int, pc: Int, d: Int) -> Int {
   if op == 11 { return d - 1 }
   if op == 12 { return d - 1 }
   if op == 14 { return d - 1 }
+  if op == 15 { return d + 1 }
+  if op == 16 { return d - 1 }
+  if op == 17 { return d - 1 }
   if op == 19 { return d - 1 }
   if op == 20 { return d - 1 }
   if op == 21 { return d - 1 }
   if op == 22 { return d - 1 }
   if op == 23 { return d - 1 }
   if op == 24 { return d - 1 }
+  if op == 28 { return d - 1 }
   return d
 }
 
@@ -314,6 +389,86 @@ fn emit_op(c: Console, pc: Int, d: Int, func_pc: Int) -> Int {
     c.print("  br label %L") num(c, resolved_next_pc) c.print("\n")
     return d - 1
   }
+  if op == 15 {
+    let orig_ptr = ir_word(pc + 1)
+    let reg = get_reg()
+    c.print("  %r") num(c, reg) c.print(" = ptrtoint ptr @str_") num(c, orig_ptr) c.print(" to i64\n")
+    c.print("  store i64 %r") num(c, reg) c.print(", ptr %s") num(c, d) c.print(", align 8\n")
+    c.print("  br label %L") num(c, resolved_next_pc) c.print("\n")
+    return d + 1
+  }
+  if op == 16 {
+    let reg = get_reg()
+    c.print("  %r") num(c, reg) c.print(" = load i64, ptr %s") num(c, d - 1) c.print(", align 8\n")
+    c.print("  call void @lm_printtext(i64 %r") num(c, reg) c.print(")\n")
+    c.print("  br label %L") num(c, resolved_next_pc) c.print("\n")
+    return d - 1
+  }
+  if op == 17 {
+    let reg1 = get_reg()
+    let reg2 = get_reg()
+    let reg3 = get_reg()
+    c.print("  %r") num(c, reg1) c.print(" = load i64, ptr %s") num(c, d - 2) c.print(", align 8\n")
+    c.print("  %r") num(c, reg2) c.print(" = load i64, ptr %s") num(c, d - 1) c.print(", align 8\n")
+    c.print("  %r") num(c, reg3) c.print(" = call i64 @lm_concat(i64 %r") num(c, reg1) c.print(", i64 %r") num(c, reg2) c.print(")\n")
+    c.print("  store i64 %r") num(c, reg3) c.print(", ptr %s") num(c, d - 2) c.print(", align 8\n")
+    c.print("  br label %L") num(c, resolved_next_pc) c.print("\n")
+    return d - 1
+  }
+  if op == 18 {
+    let reg1 = get_reg()
+    let reg2 = get_reg()
+    c.print("  %r") num(c, reg1) c.print(" = load i64, ptr %s") num(c, d - 1) c.print(", align 8\n")
+    c.print("  %r") num(c, reg2) c.print(" = call i64 @lm_int2text(i64 %r") num(c, reg1) c.print(")\n")
+    c.print("  store i64 %r") num(c, reg2) c.print(", ptr %s") num(c, d - 1) c.print(", align 8\n")
+    c.print("  br label %L") num(c, resolved_next_pc) c.print("\n")
+    return d
+  }
+  if op == 25 {
+    let tag = ir_word(pc + 1)
+    let reg1 = get_reg()
+    let reg2 = get_reg()
+    c.print("  %r") num(c, reg1) c.print(" = load i64, ptr %s") num(c, d - 1) c.print(", align 8\n")
+    c.print("  %r") num(c, reg2) c.print(" = call i64 @lm_alloc_sum(i64 ") num(c, tag) c.print(", i64 %r") num(c, reg1) c.print(")\n")
+    c.print("  store i64 %r") num(c, reg2) c.print(", ptr %s") num(c, d - 1) c.print(", align 8\n")
+    c.print("  br label %L") num(c, resolved_next_pc) c.print("\n")
+    return d
+  }
+  if op == 26 {
+    let reg1 = get_reg()
+    let reg2 = get_reg()
+    let reg3 = get_reg()
+    c.print("  %r") num(c, reg1) c.print(" = load i64, ptr %s") num(c, d - 1) c.print(", align 8\n")
+    c.print("  %r") num(c, reg2) c.print(" = inttoptr i64 %r") num(c, reg1) c.print(" to ptr\n")
+    c.print("  %r") num(c, reg3) c.print(" = load i64, ptr %r") num(c, reg2) c.print(", align 8\n")
+    c.print("  store i64 %r") num(c, reg3) c.print(", ptr %s") num(c, d - 1) c.print(", align 8\n")
+    c.print("  br label %L") num(c, resolved_next_pc) c.print("\n")
+    return d
+  }
+  if op == 27 {
+    let reg1 = get_reg()
+    let reg2 = get_reg()
+    let reg3 = get_reg()
+    let reg4 = get_reg()
+    c.print("  %r") num(c, reg1) c.print(" = load i64, ptr %s") num(c, d - 1) c.print(", align 8\n")
+    c.print("  %r") num(c, reg2) c.print(" = add i64 %r") num(c, reg1) c.print(", 8\n")
+    c.print("  %r") num(c, reg3) c.print(" = inttoptr i64 %r") num(c, reg2) c.print(" to ptr\n")
+    c.print("  %r") num(c, reg4) c.print(" = load i64, ptr %r") num(c, reg3) c.print(", align 8\n")
+    c.print("  store i64 %r") num(c, reg4) c.print(", ptr %s") num(c, d - 1) c.print(", align 8\n")
+    c.print("  br label %L") num(c, resolved_next_pc) c.print("\n")
+    return d
+  }
+  if op == 28 {
+    let reg1 = get_reg()
+    let reg2 = get_reg()
+    let reg3 = get_reg()
+    c.print("  %r") num(c, reg1) c.print(" = load i64, ptr %s") num(c, d - 2) c.print(", align 8\n")
+    c.print("  %r") num(c, reg2) c.print(" = load i64, ptr %s") num(c, d - 1) c.print(", align 8\n")
+    c.print("  %r") num(c, reg3) c.print(" = call i64 @lm_texteq(i64 %r") num(c, reg1) c.print(", i64 %r") num(c, reg2) c.print(")\n")
+    c.print("  store i64 %r") num(c, reg3) c.print(", ptr %s") num(c, d - 2) c.print(", align 8\n")
+    c.print("  br label %L") num(c, resolved_next_pc) c.print("\n")
+    return d - 1
+  }
   
   c.print("  br label %L") num(c, resolved_next_pc) c.print("\n")
   return d
@@ -421,6 +576,14 @@ fn main(c: Console) -> Unit {
   c.print("declare void @exit(i32)\n")
   c.print("declare i32 @fflush(ptr)\n")
   c.print("declare void @abort()\n")
+  
+  c.print("declare void @lm_printtext(i64)\n")
+  c.print("declare i64 @lm_concat(i64, i64)\n")
+  c.print("declare i64 @lm_int2text(i64)\n")
+  c.print("declare i64 @lm_alloc_sum(i64, i64)\n")
+  c.print("declare i64 @lm_texteq(i64, i64)\n")
+  
+  emit_static_strings(c)
   
   c.print("define i32 @main() {\n")
   c.print("  %ignored = call i64 @f") num(c, ir_main()) c.print("()\n")

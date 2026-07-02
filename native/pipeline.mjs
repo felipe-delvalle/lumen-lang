@@ -266,7 +266,7 @@ export async function buildAndRun(src, opt = '-O2') {
   return { stdout, exit, csrc };
 }
 
-async function emitLlvmWith(emitterSrc, words, main) {
+async function emitLlvmWith(emitterSrc, words, main, strings = []) {
   const I = await freshInstance();
   const len = writeSrc(I, emitterSrc);
   I.ex.compile(len);
@@ -276,9 +276,30 @@ async function emitLlvmWith(emitterSrc, words, main) {
   m32[SCRATCH / 4 + 1] = main;
   for (let i = 0; i < words.length; i++) m32[SCRATCH / 4 + 2 + i] = words[i];
 
-  // No strings/sidecar for LLVM scaffold at this checkpoint
+  // Inject the strings sidecar
   const offset_words = 2 + words.length;
-  m32[SCRATCH / 4 + offset_words] = 0; // dir_word_count = 0
+  const dir_word_count = 3 * strings.length;
+  m32[SCRATCH / 4 + offset_words] = dir_word_count;
+
+  let current_byte_offset = SCRATCH + (offset_words + 1 + dir_word_count) * 4;
+
+  for (let i = 0; i < strings.length; i++) {
+    const s = strings[i];
+    const triple_idx = SCRATCH / 4 + offset_words + 1 + 3 * i;
+    m32[triple_idx] = s.ptr;
+    m32[triple_idx + 1] = s.len;
+    m32[triple_idx + 2] = current_byte_offset;
+
+    // Copy bytes to current_byte_offset
+    const m8 = new Uint8Array(I.ex.mem.buffer);
+    m8.set(s.bytes, current_byte_offset);
+
+    current_byte_offset += s.len;
+  }
+
+  if (current_byte_offset > 589824) {
+    throw new Error(`IR + sidecar exceed Page-9 capacity (size ${current_byte_offset - SCRATCH}B exceeds 65536B)`);
+  }
 
   I.resetOut();
   if (I.ex.set_fuel_max) I.ex.set_fuel_max(4000000000n);
@@ -289,12 +310,13 @@ async function emitLlvmWith(emitterSrc, words, main) {
 export async function buildAndRunLlvm(src, opt = '-O3') {
   const ir = await compileToIR(src);
   const { words, main } = await optimizeIR(ir.words, ir.main);
-  const ll_src = await emitLlvmWith(EMIT_LLVM_SRC, words, main);
+  const ll_src = await emitLlvmWith(EMIT_LLVM_SRC, words, main, ir.strings);
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'lumen-llvm-'));
   const llfile = path.join(dir, 'p.ll'), bin = path.join(dir, 'p');
   fs.writeFileSync(llfile, ll_src);
   try {
-    execFileSync('clang', [opt, '-o', bin, llfile], { stdio: ['ignore', 'ignore', 'pipe'] });
+    const runtimeFile = new URL('./runtime_llvm.c', import.meta.url).pathname;
+    execFileSync('clang', [opt, '-o', bin, llfile, runtimeFile], { stdio: ['ignore', 'ignore', 'pipe'] });
   } catch (e) {
     throw new Error(`clang failed: ${String(e.stderr || e.message).slice(0, 300)}`);
   }
