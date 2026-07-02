@@ -13,6 +13,7 @@
 // Requires wabt (a dev-only WAT assembler):  npm install   (once, in this directory)
 import fs from 'node:fs';
 import { explain, SCHEMA_VERSION } from './diagnostics.mjs';
+import { withCache } from './cache.mjs';
 
 function usage() {
   console.error('usage: lumen <run|check|fix|ir|explain|serve|mcp> [file.lm|CODE|socket] [--json] [--write]');
@@ -52,7 +53,7 @@ if (cmd === 'serve' || cmd === 'mcp') {
   const lumen = await createCompiler();
 
   if (cmd === 'check') {
-    const c = lumen.compile(source);
+    const c = withCache('check', source, () => lumen.compile(source));
     const diags = buildDiagnostics(c.rawDiags, source);
     if (flags.has('--json')) {
       process.stdout.write(JSON.stringify({ schema: SCHEMA_VERSION, ok: diags.length === 0, irWords: c.irWords, fixable: fixableCount(diags), diagnostics: diags }) + '\n');
@@ -87,14 +88,14 @@ if (cmd === 'serve' || cmd === 'mcp') {
   }
 
   if (cmd === 'ir') {
-    const r = lumen.ir(source);
+    const r = withCache('ir', source, () => lumen.ir(source));
     if (!r.ok) { for (const d of buildDiagnostics(r.rawDiags, source)) console.error(renderHuman(arg, d)); process.exit(1); }
     console.log(r.text);
     process.exit(0);
   }
 
   // cmd === 'run'
-  const r = lumen.run(source);
+  const r = withCache('run', source, () => lumen.run(source));
   if (!r.ok) {
     for (const d of buildDiagnostics(r.rawDiags, source)) console.error(renderHuman(arg, d));
     console.error(`lumen: ${r.rawDiags.length} error(s); not run.`);
