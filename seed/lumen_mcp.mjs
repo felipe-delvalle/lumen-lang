@@ -9,6 +9,7 @@
 import readline from 'node:readline';
 import { createCompiler } from './compiler_core.mjs';
 import { buildDiagnostics, applyFixes, fixableCount, explain } from './diagnostics.mjs';
+import { withCache } from './cache.mjs';
 
 const lumen = await createCompiler();
 
@@ -28,7 +29,7 @@ const TOOLS = [
 function callTool(name, args) {
   const src = (args && args.source) || '';
   if (name === 'lumen_check') {
-    const c = lumen.compile(src); const d = buildDiagnostics(c.rawDiags, src);
+    const c = withCache('check', src, () => lumen.compile(src)); const d = buildDiagnostics(c.rawDiags, src);
     return { ok: d.length === 0, irWords: c.irWords, fixable: fixableCount(d), diagnostics: d };
   }
   if (name === 'lumen_fix') {
@@ -44,11 +45,11 @@ function callTool(name, args) {
     return { source: cur, applied, diagnostics: buildDiagnostics(fc.rawDiags, cur) };
   }
   if (name === 'lumen_run') {
-    const r = lumen.run(src);
+    const r = withCache('run', src, () => lumen.run(src));
     return { ok: r.ok, stdout: r.stdout, diagnostics: buildDiagnostics(r.rawDiags, src) };
   }
   if (name === 'lumen_ir') {
-    const r = lumen.ir(src);
+    const r = withCache('ir', src, () => lumen.ir(src));
     return { ok: r.ok, ir: r.ok ? r.text : '', diagnostics: buildDiagnostics(r.rawDiags, src) };
   }
   if (name === 'lumen_explain') {
