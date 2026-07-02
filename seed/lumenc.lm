@@ -1,11 +1,13 @@
 # lumenc.lm: The self-hosted Lumen compiler!
-# Memory map shifted by +200000 to avoid conflicting with the host (seed) memory.
-fn SRC() -> Int { return 220000 }
-fn TOKENS() -> Int { return 230000 }
-fn SYMBOLS() -> Int { return 250000 }
-fn PARAMS() -> Int { return 251000 }
-fn LOCALS() -> Int { return 251500 }
-fn FIXUPS() -> Int { return 253000 }
+# Memory map mirrors the seed's proven layout (SRC 100000, SYMBOLS 150000, params/locals
+# 157000/157500, FIXUPS 158000, TOKENS 296000, literal heap 488000) so a self-compile fits;
+# only CODE (211328) differs, because the seed's CODE_BASE holds this compiler's own IR.
+fn SRC() -> Int { return 100000 }
+fn TOKENS() -> Int { return 296000 }
+fn SYMBOLS() -> Int { return 150000 }
+fn PARAMS() -> Int { return 157000 }
+fn LOCALS() -> Int { return 157500 }
+fn FIXUPS() -> Int { return 158000 }
 fn CODE() -> Int { return 211328 }
 fn HEAP() -> Int { return 300000 }
 

@@ -126,9 +126,9 @@ async function main() {
       }
     }
 
-    // Write source at SRC() = 220000
+    // Write source at SRC() = 100000
     const testBytes = Buffer.from(testSource, 'utf8');
-    new Uint8Array(exC.mem.buffer, 220000, testBytes.length).set(testBytes);
+    new Uint8Array(exC.mem.buffer, 100000, testBytes.length).set(testBytes);
 
     // Zero globals region [0, 1024)
     new Uint8Array(exC.mem.buffer, 0, 1024).fill(0);
@@ -219,6 +219,24 @@ async function main() {
         }
       }
     }
+  }
+
+  // --- SELF: the fixpoint case. lumenc.lm compiles its own source; the reference is
+  // instance B's seed-compiled IR (lmIR). Reported, not yet in the EXPECTED_MATCH floor.
+  try {
+    const selfRes = await compileSelfhost(lmSrc);
+    if (selfRes.nerr > 0) {
+      console.log(`SELF(lumenc.lm): SELFHOST-ERROR (nerr: ${selfRes.nerr})`);
+    } else {
+      const selfDiff = compareIR(lmIR, selfRes.emittedIR);
+      if (selfDiff.ok) {
+        console.log('SELF(lumenc.lm): MATCH');
+      } else {
+        console.log(`SELF(lumenc.lm): DIFF (diverge at index ${selfDiff.index}: seed ${selfDiff.seedWord} vs selfhost ${selfDiff.shWord})`);
+      }
+    }
+  } catch (e) {
+    console.log(`SELF(lumenc.lm): SELFHOST-ERROR (crash: ${String(e.message || e)})`);
   }
 
   const summary = `${matchCount}/17 bit-identical, ${diffCount} diff, ${errorCount} error`;
