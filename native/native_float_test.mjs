@@ -12,7 +12,7 @@ import { fileURLToPath } from 'node:url';
 import { createCompiler } from '../seed/compiler_core.mjs';
 import { buildAndRunFn } from './pipeline.mjs';
 
-const FLAGS = ['-ffp-contract=fast', '-fno-fast-math', '-O3'];
+const FLAGS = ['-ffp-contract=off', '-fno-fast-math', '-O3'];
 const N = 2000000;
 
 // vol perturbed by i so clang cannot hoist the pure call out of the loop; same pattern on both sides.
