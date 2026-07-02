@@ -10,6 +10,23 @@ bit-identical to it).
 
 ---
 
+## 2026-07-01-2030 : Fix float test build flags to match determinism banner claims
+
+Corrected the mismatched compilation flags in `native_float_test.mjs` by switching `-ffp-contract=fast` to `-ffp-contract=off`. This aligns the test harness build process with the pipeline's default determinism rules (#183) and the banner claim `(clang -O3 -ffp-contract=off -fno-fast-math)`.
+
+### Performance Impact (BEFORE vs AFTER)
+- BEFORE (with `-ffp-contract=fast`):
+  - native (emit_fn.lm, truncated series): 135.6M prices/sec
+  - hand-C, libm exp/log                 : 103.7M prices/sec
+  - hand-C, SAME truncated series        : 25.5M prices/sec
+- AFTER (with `-ffp-contract=off`, Run 1 / Run 2):
+  - native (emit_fn.lm, truncated series): 127.1M / 123.1M prices/sec
+  - hand-C, libm exp/log                 : 86.5M / 84.6M prices/sec
+  - hand-C, SAME truncated series        : 24.2M / 22.0M prices/sec
+
+### Verdict Flips
+- NONE. The native rates still beat hand-C-with-libm and match hand-C with the identical algorithm.
+
 ## 2026-07-01-1842 : Regression-gated native benchmark suite with committed baseline (Law P)
 
 Extended the native benchmark runner (`native_bench.mjs`) to act as a regression gate for the native compilation pipeline. The suite now tracks and gates 4 key benchmarks: `fib_native_v1`, `fib_native_fn`, `bs_looped_fn`, and `bs_batch_fn`, comparing results against a committed baseline (`native.baseline.json`). Spreads and tolerances were calibrated using a 3-run noise procedure.
