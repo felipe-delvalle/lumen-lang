@@ -1,5 +1,8 @@
 # Lumen
 
+[![gate](https://github.com/felipe-delvalle/lumen-lang/actions/workflows/gate.yml/badge.svg)](https://github.com/felipe-delvalle/lumen-lang/actions/workflows/gate.yml)
+
+
 An AI-native programming language: authored by LLM agents, gated by executable oracles.
 
 The compiler proves itself correct on every commit: the self-hosted compiler (written in
