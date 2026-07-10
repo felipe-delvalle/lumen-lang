@@ -183,6 +183,12 @@ fn oplen_d_change(op: Int, pc: Int, d: Int) -> Int {
   if op == 54 { res = d - 2 }
   if op == 55 { res = d }
   if op == 56 { res = d - 2 }
+  if op == 58 { res = d - 1 }
+  if op == 59 { res = d - 1 }
+  if op == 60 { res = d - 1 }
+  if op == 61 { res = d - 1 }
+  if op == 62 { res = d - 1 }
+  if op == 63 { res = d }
   if res < 0 { return 0 }
   return res
 }
@@ -474,6 +480,26 @@ fn emit_op(c: Console, pc: Int, d: Int, func_pc: Int) -> Int {
   if op == 56 {
     c.print("*(uint8_t*)(LMEM+(uint64_t)") sl_int(c, d - 2) c.print(")=(uint8_t)") sl_int(c, d - 1) c.print(";\n")
     return d - 2
+  }
+  if op == 58 { arith(c, d, "&") return d - 1 }
+  if op == 59 { arith(c, d, "|") return d - 1 }
+  if op == 60 { arith(c, d, "^") return d - 1 }
+  if op == 61 {
+    slot_int(c, d - 2)
+    c.print("=(int64_t)(((uint64_t)") sl_int(c, d - 2) c.print(")<<(((uint64_t)") sl_int(c, d - 1) c.print(")&63));\n")
+    set_sty(d - 2, 0)
+    return d - 1
+  }
+  if op == 62 {
+    slot_int(c, d - 2)
+    c.print("=(int64_t)(((uint64_t)") sl_int(c, d - 2) c.print(")>>(((uint64_t)") sl_int(c, d - 1) c.print(")&63));\n")
+    set_sty(d - 2, 0)
+    return d - 1
+  }
+  if op == 63 {
+    slot_int(c, d - 1) c.print("=~") sl_int(c, d - 1) c.print(";\n")
+    set_sty(d - 1, 0)
+    return d
   }
   c.print("\n#error unsupported ") num(c, op) c.print("\n")
   return d

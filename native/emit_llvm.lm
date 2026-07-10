@@ -152,6 +152,12 @@ fn oplen_d_change(op: Int, pc: Int, d: Int) -> Int {
   if op == 23 { return d - 1 }
   if op == 24 { return d - 1 }
   if op == 28 { return d - 1 }
+  if op == 58 { return d - 1 }
+  if op == 59 { return d - 1 }
+  if op == 60 { return d - 1 }
+  if op == 61 { return d - 1 }
+  if op == 62 { return d - 1 }
+  if op == 63 { return d }
   return d
 }
 
@@ -469,7 +475,75 @@ fn emit_op(c: Console, pc: Int, d: Int, func_pc: Int) -> Int {
     c.print("  br label %L") num(c, resolved_next_pc) c.print("\n")
     return d - 1
   }
-  
+  if op == 58 {
+    let reg1 = get_reg()
+    let reg2 = get_reg()
+    let reg3 = get_reg()
+    c.print("  %r") num(c, reg1) c.print(" = load i64, ptr %s") num(c, d - 2) c.print(", align 8\n")
+    c.print("  %r") num(c, reg2) c.print(" = load i64, ptr %s") num(c, d - 1) c.print(", align 8\n")
+    c.print("  %r") num(c, reg3) c.print(" = and i64 %r") num(c, reg1) c.print(", %r") num(c, reg2) c.print("\n")
+    c.print("  store i64 %r") num(c, reg3) c.print(", ptr %s") num(c, d - 2) c.print(", align 8\n")
+    c.print("  br label %L") num(c, resolved_next_pc) c.print("\n")
+    return d - 1
+  }
+  if op == 59 {
+    let reg1 = get_reg()
+    let reg2 = get_reg()
+    let reg3 = get_reg()
+    c.print("  %r") num(c, reg1) c.print(" = load i64, ptr %s") num(c, d - 2) c.print(", align 8\n")
+    c.print("  %r") num(c, reg2) c.print(" = load i64, ptr %s") num(c, d - 1) c.print(", align 8\n")
+    c.print("  %r") num(c, reg3) c.print(" = or i64 %r") num(c, reg1) c.print(", %r") num(c, reg2) c.print("\n")
+    c.print("  store i64 %r") num(c, reg3) c.print(", ptr %s") num(c, d - 2) c.print(", align 8\n")
+    c.print("  br label %L") num(c, resolved_next_pc) c.print("\n")
+    return d - 1
+  }
+  if op == 60 {
+    let reg1 = get_reg()
+    let reg2 = get_reg()
+    let reg3 = get_reg()
+    c.print("  %r") num(c, reg1) c.print(" = load i64, ptr %s") num(c, d - 2) c.print(", align 8\n")
+    c.print("  %r") num(c, reg2) c.print(" = load i64, ptr %s") num(c, d - 1) c.print(", align 8\n")
+    c.print("  %r") num(c, reg3) c.print(" = xor i64 %r") num(c, reg1) c.print(", %r") num(c, reg2) c.print("\n")
+    c.print("  store i64 %r") num(c, reg3) c.print(", ptr %s") num(c, d - 2) c.print(", align 8\n")
+    c.print("  br label %L") num(c, resolved_next_pc) c.print("\n")
+    return d - 1
+  }
+  if op == 61 {
+    let reg1 = get_reg()
+    let reg2 = get_reg()
+    let reg3 = get_reg()
+    let reg4 = get_reg()
+    c.print("  %r") num(c, reg1) c.print(" = load i64, ptr %s") num(c, d - 2) c.print(", align 8\n")
+    c.print("  %r") num(c, reg2) c.print(" = load i64, ptr %s") num(c, d - 1) c.print(", align 8\n")
+    c.print("  %r") num(c, reg3) c.print(" = and i64 %r") num(c, reg2) c.print(", 63\n")
+    c.print("  %r") num(c, reg4) c.print(" = shl i64 %r") num(c, reg1) c.print(", %r") num(c, reg3) c.print("\n")
+    c.print("  store i64 %r") num(c, reg4) c.print(", ptr %s") num(c, d - 2) c.print(", align 8\n")
+    c.print("  br label %L") num(c, resolved_next_pc) c.print("\n")
+    return d - 1
+  }
+  if op == 62 {
+    let reg1 = get_reg()
+    let reg2 = get_reg()
+    let reg3 = get_reg()
+    let reg4 = get_reg()
+    c.print("  %r") num(c, reg1) c.print(" = load i64, ptr %s") num(c, d - 2) c.print(", align 8\n")
+    c.print("  %r") num(c, reg2) c.print(" = load i64, ptr %s") num(c, d - 1) c.print(", align 8\n")
+    c.print("  %r") num(c, reg3) c.print(" = and i64 %r") num(c, reg2) c.print(", 63\n")
+    c.print("  %r") num(c, reg4) c.print(" = lshr i64 %r") num(c, reg1) c.print(", %r") num(c, reg3) c.print("\n")
+    c.print("  store i64 %r") num(c, reg4) c.print(", ptr %s") num(c, d - 2) c.print(", align 8\n")
+    c.print("  br label %L") num(c, resolved_next_pc) c.print("\n")
+    return d - 1
+  }
+  if op == 63 {
+    let reg1 = get_reg()
+    let reg2 = get_reg()
+    c.print("  %r") num(c, reg1) c.print(" = load i64, ptr %s") num(c, d - 1) c.print(", align 8\n")
+    c.print("  %r") num(c, reg2) c.print(" = xor i64 %r") num(c, reg1) c.print(", -1\n")
+    c.print("  store i64 %r") num(c, reg2) c.print(", ptr %s") num(c, d - 1) c.print(", align 8\n")
+    c.print("  br label %L") num(c, resolved_next_pc) c.print("\n")
+    return d
+  }
+
   c.print("  br label %L") num(c, resolved_next_pc) c.print("\n")
   return d
 }

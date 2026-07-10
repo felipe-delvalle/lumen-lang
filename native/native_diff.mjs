@@ -18,7 +18,7 @@ const SCALAR = [
 ];
 const PROGRAMS = [
   ...SCALAR,
-  'hello', 'greet', 'report', 'fizzbuzz', 'safe_div', 'propagate'
+  'hello', 'greet', 'report', 'fizzbuzz', 'safe_div', 'propagate', 'bitwise'
 ];
 
 const lumen = await createCompiler();
