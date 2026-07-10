@@ -83,7 +83,7 @@ fn oplen_out(pc: Int, op: Int) -> Int {
 
 fn is_known_op(op: Int) -> Int {
   if op >= 0 {
-    if op <= 57 {
+    if op <= 63 {
       return 1
     }
   }
