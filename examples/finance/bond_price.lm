@@ -1,0 +1,41 @@
+# Fixed-rate bond pricer - a certified numeric kernel in Lumen.
+#
+# Prices a bond by discounting each cashflow: sum of CF_t / (1+y)^t.
+# Uses repeated-multiply discount factor (not pow) for stability.
+#
+# For a bond with face F, annual coupon rate c, n years to maturity, and yield y:
+# Each year t pays coupon = F*c; year n also repays principal F.
+# Price scales by 10000 and prints as integer (e.g. 102500 = 10.2500).
+#
+# Run:  node ../../seed/lumen.mjs run bond_price.lm
+
+fn bond_price(face: Float, coupon_rate: Float, years: Int, yield_rate: Float) -> Float {
+  var price = 0.0
+  var disc = 1.0
+  var t = 1
+  while t <= years {
+    disc = disc * (1.0 + yield_rate)
+    let coupon = face * coupon_rate
+    var cashflow = coupon
+    if t == years {
+      cashflow = coupon + face
+    }
+    price = price + cashflow / disc
+    t = t + 1
+  }
+  return price
+}
+
+fn show(console: Console, p: Float) -> Unit {
+  console.print_int(round(p * 10000.0))
+  console.print("\n")
+  return ()
+}
+
+fn main(console: Console) -> Unit {
+  show(console, bond_price(100.0, 0.05, 3, 0.04))      # F=100, c=0.05, n=3, y=0.04
+  show(console, bond_price(100.0, 0.06, 5, 0.05))      # F=100, c=0.06, n=5, y=0.05
+  show(console, bond_price(1000.0, 0.03, 2, 0.02))     # F=1000, c=0.03, n=2, y=0.02
+  show(console, bond_price(100.0, 0.0, 4, 0.05))       # F=100, c=0.00, n=4, y=0.05 (zero-coupon)
+  return ()
+}
