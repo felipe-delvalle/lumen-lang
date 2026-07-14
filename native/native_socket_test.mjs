@@ -88,7 +88,10 @@ function spawnSocketServer(binPath, preload) {
 
 function sendRawRequest(port, reqBytes) {
   return new Promise((resolve, reject) => {
-    const sock = net.connect({ port, host: '127.0.0.1' }, () => sock.write(reqBytes));
+    const sock = net.connect({ port, host: '127.0.0.1' }, () => {
+      sock.write(reqBytes);
+      sock.end();  // Signal EOF to server: no more requests coming on this connection
+    });
     let acc = Buffer.alloc(0);
     sock.on('data', (chunk) => { acc = Buffer.concat([acc, chunk]); });
     sock.on('end', () => resolve(acc));
@@ -142,6 +145,111 @@ console.log(fail === 0 ? `\n${checks}/${checks} socket responses bit-identical t
 
 pipeDriver.kill();
 
+// ============================== PART A2: keep-alive multiplexing (one socket, N requests) ==============
+console.log('\n== Part A2: HTTP keep-alive (multiple requests on one connection) ==');
+
+function sendRawRequestOnSocket(sock, reqBytes) {
+  return new Promise((resolve, reject) => {
+    let acc = Buffer.alloc(0);
+    let resolved = false;
+
+    const tryComplete = () => {
+      if (resolved) return;
+      const respStr = acc.toString('latin1');
+      const headerEnd = respStr.indexOf('\r\n\r\n');
+      if (headerEnd >= 0) {
+        const headerPart = respStr.slice(0, headerEnd);
+        const clMatch = /Content-Length:\s*(\d+)/i.exec(headerPart);
+        const contentLength = clMatch ? parseInt(clMatch[1], 10) : 0;
+        const bodyStart = headerEnd + 4;
+        const expectedEnd = bodyStart + contentLength;
+        if (acc.length >= expectedEnd) {
+          resolved = true;
+          sock.off('data', dataHandler);
+          sock.off('error', errorHandler);
+          resolve(acc.subarray(0, expectedEnd));
+        }
+      }
+    };
+
+    const dataHandler = (chunk) => {
+      acc = Buffer.concat([acc, chunk]);
+      tryComplete();
+    };
+
+    const errorHandler = (err) => {
+      if (!resolved) {
+        resolved = true;
+        sock.off('data', dataHandler);
+        reject(err);
+      }
+    };
+
+    sock.on('data', dataHandler);
+    sock.on('error', errorHandler);
+    sock.write(reqBytes);
+
+    setTimeout(() => {
+      if (!resolved) {
+        resolved = true;
+        sock.off('data', dataHandler);
+        sock.off('error', errorHandler);
+        resolve(acc);
+      }
+    }, 5000);
+  });
+}
+
+let keepAliveFail = 0;
+const keepAliveReq1 = Buffer.from('GET /home HTTP/1.1\r\nHost: x\r\n\r\n', 'latin1');
+const keepAliveReq2 = Buffer.from('GET /health HTTP/1.1\r\n\r\n', 'latin1');
+const wantKeepAliveResp1 = 'HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\nContent-Length: 2\r\nConnection: keep-alive\r\n\r\nhi';
+const wantKeepAliveResp2 = 'HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: 15\r\nConnection: keep-alive\r\n\r\n{"status":"ok"}';
+
+const keepAliveSock = net.connect({ port, host: '127.0.0.1' });
+await new Promise(resolve => keepAliveSock.on('connect', resolve));
+
+const keepAliveResp1 = (await sendRawRequestOnSocket(keepAliveSock, keepAliveReq1)).toString('latin1');
+if (keepAliveResp1 === wantKeepAliveResp1) {
+  console.log('PASS  first request on persistent connection -> bit-identical');
+} else {
+  console.log('FAIL  first request on persistent connection');
+  console.log(`  want: ${JSON.stringify(wantKeepAliveResp1)}`);
+  console.log(`  got:  ${JSON.stringify(keepAliveResp1)}`);
+  keepAliveFail++;
+}
+
+const keepAliveResp2 = (await sendRawRequestOnSocket(keepAliveSock, keepAliveReq2)).toString('latin1');
+if (keepAliveResp2 === wantKeepAliveResp2) {
+  console.log('PASS  second request on same persistent connection -> bit-identical');
+} else {
+  console.log('FAIL  second request on persistent connection');
+  console.log(`  want: ${JSON.stringify(wantKeepAliveResp2)}`);
+  console.log(`  got:  ${JSON.stringify(keepAliveResp2)}`);
+  keepAliveFail++;
+}
+
+keepAliveSock.destroy();
+
+// Verify server still handles a fresh connection after the keep-alive session
+const freshReq = Buffer.from('GET /home HTTP/1.1\r\nHost: x\r\n\r\n', 'latin1');
+const freshResp = (await sendRawRequest(port, freshReq)).toString('latin1');
+if (freshResp === wantKeepAliveResp1) {
+  console.log('PASS  fresh connection after keep-alive session -> server still up');
+} else {
+  console.log('FAIL  fresh connection after keep-alive session');
+  console.log(`  want: ${JSON.stringify(wantKeepAliveResp1)}`);
+  console.log(`  got:  ${JSON.stringify(freshResp)}`);
+  keepAliveFail++;
+}
+
+if (keepAliveFail === 0) {
+  console.log('\nPASS  keep-alive multiplexing works: N requests on one connection');
+} else {
+  console.log(`\nFAIL  keep-alive: ${keepAliveFail} checks failed`);
+}
+fail += keepAliveFail;
+
 // ============================== PART B: liveness (100 sequential connections) ==============
 console.log('\n== Part B: 100 sequential real HTTP connections, process still alive ==');
 
@@ -192,5 +300,5 @@ try {
 console.log('No Node runtime, no npm packages are in this binary or its request path: cold start for');
 console.log('this executable is a fork+exec of a small static-ish ELF/Mach-O, not a Node process boot.');
 
-console.log(`\nSummary: ${checks - fail >= 0 ? checks + 1 - fail : 0} pass, ${fail} fail (${checks} byte-identity checks + 1 liveness check)`);
+console.log(`\nSummary: ${checks - fail + 4 >= 0 ? checks + 4 - fail : 0} pass, ${fail} fail (${checks} byte-identity checks + 3 keep-alive checks + 1 liveness check)`);
 process.exit(fail === 0 ? 0 : 1);
