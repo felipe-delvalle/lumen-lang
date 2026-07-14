@@ -51,12 +51,14 @@ jobs:
           node native_fn_test.mjs
           node native_float_test.mjs
           node llvm_diff.mjs
+          node llvm_float_test.mjs
           node standalone_diff.mjs
           node heapcap_test.mjs
           node fixpoint_emit_test.mjs
           node native_compile_test.mjs
           node native_pipeline_test.mjs
           node native_fixpoint_test.mjs
+          node arm64_spike_check.mjs
           node state_eventlog_test.mjs
           node analytics_events_test.mjs
           node native_handlers_test.mjs
@@ -81,3 +83,7 @@ jobs:
           node content_type_value_test.mjs
           node http_serve_test.mjs
           node lumen_serve_native.mjs --selftest
+      - name: promptgreen rig selftest
+        working-directory: .
+        run: |
+          node bench/promptgreen/selftest.mjs
