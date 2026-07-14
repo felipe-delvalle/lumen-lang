@@ -31,6 +31,7 @@ const CONFORMANCE_LIST = [
   '../examples/black_scholes.lm',
   '../examples/finance/black_scholes.lm',
   '../examples/finance/implied_vol.lm',
+  '../examples/finance/bond_price.lm',
   '../mu/examples/arrays.lm',
   '../mu/examples/records.lm',
 ];
@@ -71,6 +72,7 @@ const EXPECTED_MATCH = [
   '../examples/black_scholes.lm',
   '../examples/finance/black_scholes.lm',
   '../examples/finance/implied_vol.lm',
+  '../examples/finance/bond_price.lm',
   '../mu/examples/arrays.lm',
   '../mu/examples/records.lm',
 ];
