@@ -340,6 +340,7 @@ function patchMainToSocketServer(csrc) {
   if (!m) throw new Error('could not find the emitted main entry to patch');
   const entry = m[1];
   const loop = `#include <sys/socket.h>
+#include <sys/time.h>
 #include <netinet/in.h>
 #include <arpa/inet.h>
 static uint32_t lm_rd4(void){unsigned char h[4]; if(fread(h,1,4,stdin)!=4)return 0xffffffffu; return (uint32_t)h[0]|((uint32_t)h[1]<<8)|((uint32_t)h[2]<<16)|((uint32_t)h[3]<<24);}
@@ -369,18 +370,36 @@ static void lm_socket_accept_loop(int srv){
   for(;;){
     int c=accept(srv,0,0);
     if(c<0)continue;
-    int n=lm_read_request(c);
-    if(n<0){close(c);continue;}
-    *(int32_t*)(LMEM+${REQ_LEN_ADDR})=(int32_t)n;
-    /* Same per-request arena reset as the pipe driver (Stone B) - see patchMainToServeLoop's
-       comment above for why saving/restoring LM_HP/AHP around the entry call is sound and keeps
-       the process's heap footprint flat across an unbounded number of connections. */
-    int64_t s_lm=LM_HP, s_ah=AHP;
-    ${entry}();
-    int32_t o=*(int32_t*)(LMEM+${OUT_LEN_ADDR});
-    if(o>0) write(c,LMEM+${OUT_BASE},(size_t)o);
-    else write(c,lm_502,sizeof(lm_502)-1);
-    LM_HP=s_lm; AHP=s_ah;
+    /* Idle-timeout the accepted connection so one silent client cannot wedge this
+       single-threaded accept loop forever (the review of the keep-alive change flagged that a
+       connection that opens and then sends nothing would block accept() indefinitely). A read
+       that blocks longer than the timeout returns -1 with EAGAIN/EWOULDBLOCK, which the loop
+       below treats like any other read failure: close and move on to the next connection. */
+    struct timeval tv; tv.tv_sec=15; tv.tv_usec=0;
+    setsockopt(c,SOL_SOCKET,SO_RCVTIMEO,&tv,sizeof(tv));
+    /* Per-connection keep-alive loop: one connection serves N sequential requests, closing
+       when the client closes (read returns 0), errors, or idles past the timeout above. v1
+       scope: no HTTP pipelining - requests are read strictly one-at-a-time. Pipelined bytes (if
+       the client sent multiple requests in a single read) are not carried over; each request
+       starts fresh from LMEM+REQ_BASE. This simplification is acceptable for sequential
+       (non-pipelined) keep-alive, and keeps the buffer management straightforward. */
+    for(;;){
+      int n=lm_read_request(c);
+      if(n<=0)break;  /* Client closed (n==0) or error (n<0): exit keep-alive loop */
+      *(int32_t*)(LMEM+${REQ_LEN_ADDR})=(int32_t)n;
+      /* Same per-request arena reset as the pipe driver (Stone B) - see patchMainToServeLoop's
+         comment above for why saving/restoring LM_HP/AHP around the entry call is sound and keeps
+         the process's heap footprint flat across an unbounded number of requests and connections. */
+      int64_t s_lm=LM_HP, s_ah=AHP;
+      ${entry}();
+      int32_t o=*(int32_t*)(LMEM+${OUT_LEN_ADDR});
+      if(o>0) write(c,LMEM+${OUT_BASE},(size_t)o);
+      else write(c,lm_502,sizeof(lm_502)-1);
+      LM_HP=s_lm; AHP=s_ah;
+      /* After writing response, loop back to read the next request on the same connection
+         (keep-alive). If the client sends nothing more, the next read will return 0 and we
+         will close the connection. */
+    }
     close(c);
   }
 }
