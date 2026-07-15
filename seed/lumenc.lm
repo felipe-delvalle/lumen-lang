@@ -36,8 +36,29 @@ fn SRC() -> Int { return 100000 }
 fn TOKENS() -> Int { return 299000 }
 fn SYMBOLS() -> Int { return 170000 }
 fn PARAMS() -> Int { return 177000 }
+# LOCALS (D6, GAP-A prefix-bisect find): entries are 8 bytes (name_off, name_len), get_nlocal()
+# resets to 0 at the start of EVERY function (c_fn, set_nlocal(0)) and never shrinks again until
+# the next fn - so its true capacity requirement is "however many distinct `let`/`var` bindings
+# the single largest function in any toolchain source declares", not a whole-program budget.
+# The old span [177500,178000) = 500 bytes = 62 slots was fine for ordinary functions but
+# native/emit_llvm.lm's emit_op() (one giant per-opcode dispatch, ~70 `if op == N` arms sharing
+# one function body) declares 163 distinct locals across its lifetime. Slot 63 onward silently
+# overran into FIXUPS' own (pos, off, len) records starting at the old 178000, corrupting
+# in-flight fixups with garbage (off, len) pairs that -- by coincidence, since a local's own
+# (off, len) IS a valid-looking (off, len) once misread as a fixup record's tail -- decoded as
+# plausible-looking but bogus forward-reference names ('reg2', 'hi', 'rshift', 'rovf', ...),
+# so resolve_fixups's sym_find() correctly failed to find a "function" by that name and emitted
+# a real but SPURIOUS E0002 "unknown function" for each one (68 on the actual file; the found
+# minimal repro is emit_llvm.lm's emit_op alone). Symptom only appears on this one huge function
+# because none of the toolchain's other functions declare anywhere near 62 locals - the earlier
+# GAP-A tests never exercised this ceiling.
+# Fix: widen LOCALS to 4000 bytes (500 slots, +207% over the 163 high-water mark) by pushing
+# FIXUPS from 178000 to 181500 - FIXUPS's real ceiling is CODE at 211328 (not TOKENS, which
+# sits much further out at 299000, past CODE/VARIANTS/PTYPES/etc.), so [181500,211328) =
+# 29828 bytes = 2485 fixup slots is still enormous headroom versus the dozens any file
+# actually needs, and nothing downstream of FIXUPS had to move.
 fn LOCALS() -> Int { return 177500 }
-fn FIXUPS() -> Int { return 178000 }
+fn FIXUPS() -> Int { return 181500 }
 fn CODE() -> Int { return 211328 }
 fn HEAP() -> Int { return 400000 }
 # sum-type variant table: (name_off, name_len, tag) x 12 bytes, immediately after CODE's
