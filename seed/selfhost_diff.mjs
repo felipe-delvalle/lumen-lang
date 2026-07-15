@@ -113,11 +113,11 @@ async function main() {
   let lexCompileEntry = -1;
   const lexEntries = [];
   
-  for (let addr = 150000; addr < 157000; addr += 12) {
+  for (let addr = 170000; addr < 177000; addr += 12) {
     const name_off = memB.getInt32(addr, true);
     const name_len = memB.getInt32(addr + 4, true);
     const entry = memB.getInt32(addr + 8, true);
-    if (name_off >= 100000 && name_off < 150000 && name_len > 0) {
+    if (name_off >= 100000 && name_off < 170000 && name_len > 0) {
       const name = Buffer.from(u8B.slice(name_off, name_off + name_len)).toString('utf8');
       if (name === 'lex_compile') {
         lexCompileEntry = entry;
