@@ -37,6 +37,7 @@ const CONFORMANCE_LIST = [
   '../mu/examples/arrays.lm',
   '../mu/examples/records.lm',
   '../mu/examples/decimal.lm',
+  '../examples/finance/accrual_dec.lm',
 ];
 
 // expected match floor: every program here must stay bit-identical or the harness exits 1.
@@ -54,6 +55,8 @@ const CONFORMANCE_LIST = [
 // swap_rate (par interest-rate swap kernel with discount factors) joined: 29/29.
 // decimal (D4: Dec end-to-end, literals/coercion/dec_div/dec_to_text/dec_to_float/overflow-
 // free happy-path kernel) joins with the self-hosted compiler's Dec front-end: 30/30.
+// accrual_dec (D5: actual/360 daily-compounded accrued-interest kernel on Dec, recursion +
+// dec_div/*/- composed, Python decimal.Decimal-oracle-verified) joins: 31/31.
 const EXPECTED_MATCH = [
   '../mu/examples/fib_print.lm',
   '../mu/examples/add.lm',
@@ -85,6 +88,7 @@ const EXPECTED_MATCH = [
   '../mu/examples/arrays.lm',
   '../mu/examples/records.lm',
   '../mu/examples/decimal.lm',
+  '../examples/finance/accrual_dec.lm',
 ];
 
 async function main() {

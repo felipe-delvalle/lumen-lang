@@ -1,0 +1,58 @@
+# accrual_dec.lm - a small verified money kernel built on Dec (D5): actual/360 day-count
+# accrued interest on a Dec notional at a Dec annual rate, compounded daily, printing the
+# exact Dec text at every step (no scaled-int workaround the way Float still needs one).
+#
+# accrued_for(notional, annual_rate, days) = notional * ((1 + annual_rate/360)^days - 1)
+# using only +, *, and dec_div (the only division path for Dec) - no bare '/' on Dec operands
+# anywhere, and every intermediate value is exact to the 1e-6 scale floor, rounded half-even
+# only where Dec's fixed scale actually forces a rounding decision (each dec_div step).
+#
+# Verified independently against Python decimal.Decimal (ROUND_HALF_EVEN, quantized to
+# 0.000001 after each * and dec_div, exactly mirroring Dec's own semantics) before being
+# registered in seed/corpus.mjs and seed/selfhost_diff.mjs; see docs/VELOCITY_LEDGER.md entry
+# #1 for the gates this program is wired into.
+
+fn one_day_factor(annual_rate: Dec) -> Dec {
+  return 1.00d + dec_div(annual_rate, 360)
+}
+
+fn compound_days(principal: Dec, annual_rate: Dec, days: Int) -> Dec {
+  if days == 0 {
+    return principal
+  }
+  return compound_days(principal * one_day_factor(annual_rate), annual_rate, days - 1)
+}
+
+fn accrued_for(notional: Dec, annual_rate: Dec, days: Int) -> Dec {
+  return compound_days(notional, annual_rate, days) - notional
+}
+
+fn main(c: Console) -> Unit {
+  # 1,000,000.00 notional, 5.25% annual (0.0525d as a decimal fraction, NOT the percent
+  # number), actual/360 daily compounding, 30-day accrual period
+  c.print("notional = ")
+  c.print(dec_to_text(1000000.00d))
+  c.print("\n")
+  c.print("annual_rate = ")
+  c.print(dec_to_text(0.0525d))
+  c.print("\n")
+  c.print("days = 30\n")
+  c.print("accrued interest (30d) = ")
+  c.print(dec_to_text(accrued_for(1000000.00d, 0.0525d, 30)))
+  c.print("\n")
+
+  # a shorter period on a smaller notional, different rate: exercises the same kernel
+  # composed differently (dec_div, *, - all chained through recursion)
+  c.print("accrued interest (10,000.00d @ 0.0300d, 10d) = ")
+  c.print(dec_to_text(accrued_for(10000.00d, 0.0300d, 10)))
+  c.print("\n")
+
+  # zero-day accrual: the base case, must be exactly 0.0
+  c.print("accrued interest (zero days) = ")
+  c.print(dec_to_text(accrued_for(500.00d, 0.0450d, 0)))
+  c.print("\n")
+
+  # the ending balance (principal + accrued), a second Dec value derived from the first
+  c.print("ending balance (30d) = ")
+  c.print(dec_to_text(1000000.00d + accrued_for(1000000.00d, 0.0525d, 30)))
+}
