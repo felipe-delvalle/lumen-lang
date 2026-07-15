@@ -1,0 +1,97 @@
+# Lumen against the field: a per-dimension comparison with fourteen language implementations
+
+Status: strategic document, not a spec. This is the multi-language companion to `VISION_2036.md`. That file scores Lumen against Python, the one incumbent, on thirteen dimensions. This file widens the same honesty gate to the fourteen language source trees cloned for study, because "beat every language at every dimension" is a claim that has to survive being pointed at the languages that already own the exact axes Lumen claims. The whole value of the exercise is that some of these languages are the world reference on a dimension Lumen wants, and the document is worthless if it pretends otherwise.
+
+The single sentence, carried from `RULES.md`: Lumen wins by being the shortest, tightest, most trustworthy path from a human's intent to a proven running binary, for a model writing it. This file asks, dimension by dimension, who actually owns that axis today, and states plainly where Lumen wins, where it can, and where it loses and must earn.
+
+## The scoring rule (unchanged from 2036)
+
+Every dimension resolves to one of four verdicts, and never to a boast a referee could puncture:
+
+- **Won across the field.** Lumen's architecture wins the axis against all fourteen, gated by a number that already exists.
+- **Won by design, contested by one specialist.** Lumen wins the general case, but a single specialist language leads on the pure form of the axis and Lumen does not out-max it.
+- **Structural opening.** No language in the field holds the axis natively; Lumen can take it fast, and has not landed it yet. Named as aspiration until the benchmark moves.
+- **Lost today, must earn.** A language in the field owns this axis now and will still own it for years. Lumen does not match it; it either subsumes it or earns it through the corpus and the loop.
+
+A win claimed without its metric is downgraded to aspiration in plain words. The distribution of verdicts is the real answer, and it is defensible precisely because it is not uniform.
+
+## The roster (implementation grounded against the cloned source)
+
+Each entry lists what the compiler or runtime is actually written in (read from each project's public source tree at the time of writing) and the one axis the language is the reference for. This is the honest statement of who the competition is.
+
+| Language | Impl of the toolchain (from source) | The axis it is the reference for |
+|----------|-------------------------------------|----------------------------------|
+| Python (CPython) | C core plus a large Python stdlib | Ecosystem, familiarity, AI-authorability today |
+| Java (OpenJDK) | Java plus C++ (HotSpot JIT) | JIT throughput after warmup, mature debuggers and profilers |
+| C (GCC) | C and C++ | Raw ahead-of-time performance, ubiquity, decades of optimization |
+| C++ (LLVM/Clang) | C++ | Raw performance, and the backend most other fast languages lower to |
+| Go | Go, self-hosted, plus assembly | Build determinism, compile speed, simple static deployment |
+| Rust | Rust, self-hosted, LLVM backend | Memory safety without a GC, best-in-class structured diagnostics |
+| Ruby (MRI) | C core, Ruby stdlib, Rust JIT (YJIT/ZJIT) | Developer-happiness ergonomics, metaprogramming |
+| Lean 4 | Lean, self-hosted, plus C++, emits C | Machine-checked proof; a self-hosting compiler that emits C |
+| Zig | Zig, self-hosted, plus C | Clarity and explicitness, comptime, cross-compilation |
+| Mojo (Modular) | Mojo stdlib (open), C++ and MLIR compiler (closed) | AI and numeric performance via MLIR and SIMD |
+| Koka | Haskell compiler, Koka stdlib, C runtime | Algebraic effects and handlers; the effect-system reference |
+| Julia | Julia base, C and C++ runtime, femtolisp parser | Scientific and numeric computing, multiple dispatch |
+| Roc | compiler being rewritten in Zig, Roc builtins | Friendliness and error-message DX, pure functional, LLVM-native |
+| Idris 2 | Idris 2, self-hosted, Chez Scheme backend, C RTS | Dependent types for programming, quantitative (linear) types |
+
+One structural fact shapes the whole perf discussion: C++, Rust, Zig, Julia, and Mojo all lower to LLVM, and Lumen emits LLVM too. So "beat C++ on speed" really means "beat what LLVM produces," which Lumen does not; it consumes the same backend. Lumen's perf differentiator is the properties it carries around the generated code, not a higher peak than LLVM.
+
+## The master scorecard
+
+Columns: the dimension, the champion or champions among the fourteen, and Lumen's honest verdict with its gate.
+
+| # | Dimension | Champion(s) in the field | Lumen's honest verdict |
+|---|-----------|--------------------------|------------------------|
+| 1 | Provable correctness (proof depth) | Lean 4, Idris 2 (full dependent types, machine-checked proofs) | **Lost today, must earn.** Lumen has scoped contracts and effects, not dependent proof. It does not out-prove Lean or Idris and will not soon. Its only defensible edge is proof attached to code that also ships native and fast, which Lean and Idris do not target. |
+| 2 | Numeric exactness (money, decimal) | None natively. Java, Ruby, Python, Julia have decimal as a library | **Structural opening.** No language in the field has an exact-decimal literal by right at the language level. Lumen can land `0.1d + 0.2d == 0.3` gated byte-identical in days. Not landed yet, so aspiration, but the cleanest opening on the board. |
+| 3 | Determinism and replay | None by default. Go has reproducible builds but deliberately randomizes map iteration at runtime | **Won across the field on determinism; replay is gated-open.** Determinism by default, nondeterminism capability-tainted and quarantined, is real and CI-gated today: the bit-identity suite (`native_diff.mjs`, `llvm_diff.mjs`, `native_float_test.mjs`, `llvm_float_test.mjs`, and their siblings in `.github/workflows/gate.yml`) proves the interpreter and both native backends agree to the bit on every conformance program, every commit. No language in the field offers determinism-by-default as a language property, so that half stands. The replay half does not exist yet: `docs/ROADMAP_2036.md`'s gap register states plainly that "record/replay, backward stepping, and `why` provenance... none is implemented," and schedules `lumen run --record` and the deterministic tape as Arc 2 work. Replay-to-the-bit is aspiration until that tape lands. |
+| 4 | Effect safety and capability sandboxing | Koka (row-polymorphic algebraic effects and handlers, to C via Perceus) | **Aspiration, contested by one specialist.** Koka leads on effect-system expressiveness regardless of what Lumen builds. Lumen's narrower bet, capability as the single effect mechanism, is design-only today: the only capability that exists is `Console`, threaded as an ordinary parameter, with zero derived effect rows, zero enforcement, and no capability set beyond it (`docs/rfcs/0001-capabilities-v1.md`, status draft, PR #52, states this directly). "A no-capability function is provably pure" is trivially true today only because `Console` is the sole capability; it is not yet a general, checked property, and "multi-tenant isolation is a type error" is a worked design example in the RFC, not an implemented or CI-gated test. Named as aspiration until the purity gate and a tenant-isolation type-error test are CI gates. |
+| 5 | Toolchain trust (self-hosting fidelity) | Self-hosting is common: Go, Rust, Zig, Lean 4, Idris 2, Julia in part | **Won across the field on the gate, not the act.** Self-hosting is table stakes here. The differentiator is the fixpoint: the seed kept forever as a reference oracle, a generation-2 compiler byte-identical to it, gated every commit. That specific bit-identity gate is rare to absent across the field. |
+| 6 | Compiler as a reward environment | Rust is closest (structured JSON diagnostics); none were built for it | **Won across the field, on today's grounded evidence.** What exists now: deterministic runs (bit-identical across the interpreter and both native backends, CI-gated); structured JSON diagnostics with stable codes (`E####`/`W####`/`C####`/`R####` families, each "a documented, stable registry," per `docs/DEBUGGABILITY.md`); a warm compile path that is sub-millisecond in practice (0.5 ms cold / 1.5 ms incremental on 1,200 LOC, `bench/DASHBOARD.md` Pillar B) with an edit-to-diagnostic p50 target under 5 ms (`RULES.md` Rule 2); and the hermetic promptgreen rig v0 (`bench/promptgreen/`, built with "no network call, no real model API"), which today exercises a scripted deterministic author over 10 frozen tasks and has not yet run a real model or produced any Lumen-versus-Python number. What has not happened: the RL-lift experiment itself, training a model against this environment and measuring an authorship gain, is Arc 3 work (`docs/ROADMAP_2036.md`) and has not run. No mainstream language in the field was designed to be a reward environment at all, which is why the axis is still won on the ingredients that exist, but the reward-signal claim rests on those ingredients, not yet on a demonstrated RL lift. |
+| 7 | Generated-code speed | C (GCC), C++ (LLVM), Rust, plus JVM and Julia and Mojo in their niches | **Lost today, must earn.** Lumen emits C that matches or beats naive hand-C on tiny kernels, but has no optimizer near LLVM or GCC, no autovectorization, no LTO, no numeric stdlib. On real workloads it loses to the whole LLVM family and the JVM. It shares LLVM as a backend rather than beating it. The LLVM path itself is not float-starved: full Float coverage (IR ops 29-48) is gated bit-identical in CI (`native/llvm_float_test.mjs`, PR #54). A separate sub-axis, compile latency rather than generated-code speed, is winning on its own numbers: `bench/DASHBOARD.md` Pillar B reports 0.5 ms cold and 1.5 ms incremental compile on 1,200 LOC, and 794.1 kLOC/sec throughput against a >100 kLOC/sec target, with the warm daemon aimed at sub-millisecond steady state. Those are Lumen-only numbers today; a cross-language compile-latency comparison against the field has not been designed or run in this tree, and is what would turn the sub-axis into a scored claim rather than an internal target. The overall generated-code-speed verdict stays lost today. |
+| 8 | Build determinism and supply chain | Go and Zig (self-contained, no network at build, single binary) | **Won across the field, tied with Go and Zig, with an air-gap honesty clause.** No network during compile, single self-contained binary, zero-legacy, for the language's own compile path. But the development harnesses still ride `node` and `clang` today: the purity gate (`tools/purity_gate.mjs`) is explicitly an "ADVISORY reporter" that inventories every non-Lumen artifact on the toolchain path and pins the debt rather than blocking CI, because the full air-gap test, building and running the toolchain end to end on a machine with nothing but Lumen and its named substrate, is Arc 1's exit gate in `docs/ROADMAP_2036.md` and is not yet met. The reproducible wasm-free C bootstrap (`native/lumenc.bootstrap.c`, PR #62) is the step that narrowed the gap: clang-ing the checked-in C now reproduces the native compiler byte-for-byte with zero `wabt` and zero WebAssembly at that stage, though the WAT seed remains the transitional oracle elsewhere in the pipeline. Go and Zig are genuine co-champions; Lumen ties them on the networked-package-manager comparison (beating Python pip, Node, deep Cargo trees) but does not yet claim sole championship on self-containment until its own air-gap test is green. |
+| 9 | AI-authorability (intent to green) | Python, then Java, C, Go, JS by corpus size | **Lost today, must earn.** Lumen is designed for it (the obvious program compiles, JSON diagnostics, free confident fixes, spec in context), but models have never seen it. On raw first-try-compile a model still does better in Python out of familiarity. Resolver is the corpus and the reinforcement loop. The whole bet, honestly not yet won. |
+| 10 | Governance and evolution velocity | Lumen | **Won across the field, with a caveat.** ISO for C and C++ (multi-year), JCP and JEP for Java, PEP for Python, RFC and editions for Rust, proposals for Go. Lumen gates a change by an executable oracle and lands it in days. Caveat: they carry vast installed bases and their caution is a feature; Lumen is young and small, so speed is cheap. The durable edge is the mechanism (a proof, not a committee), not the current pace. |
+| 11 | Debuggability | JVM (JFR, mature debuggers), C and C++ (gdb, lldb, Mozilla rr), Python (pdb), Rust (diagnostics) | **Split.** Won by design on the language properties (deterministic time-travel replay, structured diagnostics, compiler-applied fixes). Lost on tooling maturity: JVM, C++, and Python debuggers and profilers are decades ahead. |
+| 12 | Ecosystem breadth and hiring | Python, Java, C and C++, Go, Rust, Ruby, and Julia in science | **Subsumed, not out-competed.** Lumen will not out-library any of them. The strategy is to lower verified cores to a host (C, LLVM, WASM, Python, Rust) so their ecosystems become Lumen's output targets, not reasons to leave. |
+| 13 | Human familiarity today | Python, Java, C, C++, Go, Ruby | **Lost today, subsumed over time.** Tiny today; grown only by the corpus. Honest aspiration, tied to the same loop as row 9. |
+
+## The three honest buckets
+
+Reading the verdict column, the field sorts Lumen's claim into three groups, and only the first is a present-tense win.
+
+**A. Axes Lumen wins against all fourteen today.** Determinism and replay (3), compiler-as-a-reward-environment (6), governance velocity (10, with its caveat), the self-hosting fixpoint gate (5), and build determinism (8, tied with Go and Zig). These are structural: they follow from design commitments the other languages did not make and mostly cannot retrofit without ceasing to be themselves. This is the defensible marketing truth.
+
+**B. The clean structural opening.** Native exact-decimal by right (2). No language in the field has it at the language level; several have it as a library. Lumen's governance velocity (bucket A) is exactly what lets it convert this opening into a shipped win in days. It is the single highest-leverage next feature, and it is aspiration until it lands.
+
+**C. Axes Lumen loses today and must earn or subsume.** Proof depth (1, Lean and Idris own it), effect-system expressiveness (4, Koka owns it), raw performance (7, the LLVM family and JVM own it), AI-authorability today (9, Python owns it), debugger and profiler maturity (11, JVM and C++ and Python own it), ecosystem (12) and familiarity (13, nearly everyone owns them). Pretending otherwise is exactly the triumphalism the honesty gate forbids.
+
+## The integration thesis: no rival holds the whole set
+
+The reason "beat every language at every dimension" is not simply false is that every competitor in the field is a single-axis champion that pays for its win somewhere else. The honest form of Lumen's claim is not that it out-maxes each specialist on that specialist's axis. It is that no other language holds the whole set at once.
+
+- Lean 4 and Idris 2 max proof, and give up native shipping speed, ecosystem, determinism-by-default, a capability model, and AI-authorability to get it.
+- Koka maxes effects, at research scale, with no performance story, no proof, and no reward-environment design.
+- C, C++, and Rust max performance, with no proof, no determinism by default, and (for C and C++) no safety. Rust is the closest to the reward-environment axis and still was not built for it.
+- Julia and Mojo max numerics, with no capability safety and no proof, and Mojo's compiler is closed, which forecloses the entire self-hosting-fidelity and trust-layer story.
+- Go and Zig max build determinism and simplicity. These are Lumen's true peers, and they carry no proof, no effect system, no decimal, and no reward-environment design.
+- Python, Java, and Ruby max ecosystem and familiarity, and are slow, nondeterministic, and unproven.
+
+Lumen is the only entry that holds provable-scoped-correctness, determinism, capability-effects, native lowering, machine-speed governance, and reward-environment design under one small, self-hosted, bit-faithful, AI-authorable core. It does not win any single specialist's axis outright today except the two nobody else was built for (determinism-with-replay and compiler-as-reward-environment) plus governance velocity. It wins the integral. That is the only honest reading of the mandate, and it is a stronger claim than the triumphalist one because it is true.
+
+## What the comparison tells the build order
+
+The scorecard is a roadmap when read as work, and it lands inside the `/lumen` loop, each item tagged to its campaign wave and its `docs/ROADMAP_2036.md` arc:
+
+1. **Land native exact-decimal (row 2, bucket B; wave W1, Arc 1).** The one axis no rival holds natively and the one Lumen's governance velocity can take fastest. Converts the beachhead's headline correctness claim from nearly-true to true.
+2. **Stand up the reinforcement-against-the-compiler loop (row 9, bucket C; wave W5, Arc 3).** The whole contested bet. The warm daemon and the MCP surface already exist; meter tokens-to-green and feed the authorship benchmark. This is the only resolver for the familiarity and authorability axes. Arc 3's own kill criterion applies here: if reinforcement against the compiler shows no measurable authorship gain by end-2029, the plan pivots the primary identity to the verified-intermediate-representation bet, lowering to legacy targets, rather than the corpus-and-reinforcement story.
+3. **Grow the native optimizer and a numeric stdlib (row 7, bucket C; wave W6).** The honest path to closing the performance gap on real workloads rather than tiny kernels, without ever claiming to beat LLVM, which Lumen uses.
+4. **Keep proof and ecosystem as long-game and subsumption (rows 1, 12; wave W7 for the lowering-to-host work now, Arc 4's lower-to-any-runtime for the rest later).** Do not try to out-prove Lean or out-library Python. Attach proof where contracts are asserted, and lower to host ecosystems so they become output targets.
+
+Each of these is one turn of the loop the project already runs, and each converts a scorecard verdict from claim into gated fact.
+
+## Where this sits
+
+`VISION_2035.md` is the ten-year strategy and the floor. `VISION_2036.md` is the competitive scorecard against the one incumbent, Python. This file is the wider field test: the same honesty gate pointed at the fourteen languages that own the axes Lumen wants, so the mandate is scored against the strongest possible version of the competition rather than the most convenient one. `docs/ROADMAP_2036.md` is the plan of record that turns every verdict here into scheduled work: the arcs, their exit gates, and their kill criteria. The claim is earned per row or downgraded to aspiration in plain words. That is the only kind of "best language" worth the name.
