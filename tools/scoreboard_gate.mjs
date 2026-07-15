@@ -18,6 +18,14 @@
 // --check never touches bench/DASHBOARD.md; --render never validates the scoreboard's own schema
 // beyond what it needs to build the table. Keep the two modes independent so a CI failure always
 // points at exactly one cause.
+//
+// last_flip semantics (documented here since JSON has no comment syntax): null means the
+// dimension has not flipped since this scoreboard was introduced - its initial snapshot. When a
+// verdict later flips, the PR that lands the flip sets that dimension's last_flip to
+// {"date": "YYYY-MM-DD", "evidence": "<the primary gate file that landed>"}. The flip-coupling
+// check above already forces that same evidence file into the diff alongside the verdict change,
+// which is what keeps the hand-written date honest: it cannot be backdated to a commit that did
+// not actually land the cited evidence, because that commit would have failed --check.
 
 import { readFileSync, writeFileSync, existsSync } from 'node:fs';
 import { execSync } from 'node:child_process';
