@@ -90,6 +90,13 @@
   (data (i32.const 160048) "shl")
   (data (i32.const 160064) "shr")
   (data (i32.const 160080) "bnot")
+  ;; Dec (exact decimal, D1): the type keyword + its three builtin names, same free-gap
+  ;; convention as the bitwise names above (16-byte slots, keyword region [248000..248400)
+  ;; is full).
+  (data (i32.const 160096) "Dec")
+  (data (i32.const 160112) "dec_div")
+  (data (i32.const 160128) "dec_to_text")
+  (data (i32.const 160144) "dec_to_float")
 
   (global $osp     (mut i32) (i32.const 0))
   (global $csp     (mut i32) (i32.const 0))
@@ -115,6 +122,14 @@
   (global $cur_fn_is_unit (mut i32) (i32.const 1))
   (global $prof (mut i32) (i32.const 0))          ;; profiling on/off flag
   (global $last_steps (mut i64) (i64.const 0))    ;; exact fuel/step count of the most recent $run
+  ;; Dec (D1) runtime scratch: a return channel for the two-output helpers below (this WAT
+  ;; module never uses multi-value function results, so a scratch-global pair is the
+  ;; established, toolchain-version-safe way to hand back a second value).
+  (global $dec_hi (mut i64) (i64.const 0))        ;; $mul128 high 64 bits
+  (global $dec_lo (mut i64) (i64.const 0))        ;; $mul128 low 64 bits
+  (global $dec_q  (mut i64) (i64.const 0))        ;; $divmod128by64 quotient
+  (global $dec_r  (mut i64) (i64.const 0))        ;; $divmod128by64 remainder
+  (global $dec_qoverflow (mut i32) (i32.const 0)) ;; $divmod128by64: 1 if the true quotient needs >64 bits
 
   ;; ---------- small helpers ----------
   (func $b (param $i i32) (result i32)
@@ -126,6 +141,18 @@
       (i32.or (i32.and (i32.ge_u (local.get $c) (i32.const 65)) (i32.le_u (local.get $c) (i32.const 90)))
               (i32.and (i32.ge_u (local.get $c) (i32.const 97)) (i32.le_u (local.get $c) (i32.const 122))))
       (i32.eq (local.get $c) (i32.const 95))))
+  ;; Dec (D1): true if source byte $i is 'd' AND not immediately followed by an
+  ;; identifier-continuation character, so a number directly abutting an identifier (e.g. a
+  ;; typo like `1death`) is not silently swallowed as DEC(1) + garbage; it lexes as before
+  ;; (INT then IDENT) and fails to parse, same as it always has.
+  (func $is_d_suffix (param $i i32) (param $srclen i32) (result i32)
+    (if (i32.ge_u (local.get $i) (local.get $srclen)) (then (return (i32.const 0))))
+    (if (i32.ne (call $b (local.get $i)) (i32.const 100)) (then (return (i32.const 0))))
+    (if (i32.and (i32.lt_u (i32.add (local.get $i) (i32.const 1)) (local.get $srclen))
+                 (i32.or (call $is_alpha (call $b (i32.add (local.get $i) (i32.const 1))))
+                         (call $is_digit (call $b (i32.add (local.get $i) (i32.const 1))))))
+      (then (return (i32.const 0))))
+    (i32.const 1))
   (func $streq (param $p1 i32) (param $p2 i32) (param $len i32) (result i32)
     (local $i i32)
     (local.set $i (i32.const 0))
@@ -301,7 +328,8 @@
     (i32.const 0))
   ;; 1 if the CURRENT token is the type `Float`, else 0 (Int / any other type). Peeks, does not consume.
   (func $type_code (result i32)
-    (if (call $kw_is (global.get $tp) (i32.const 248230) (i32.const 5)) (then (return (i32.const 1))))
+    (if (call $kw_is (global.get $tp) (i32.const 248230) (i32.const 5)) (then (return (i32.const 1))))   ;; Float
+    (if (call $kw_is (global.get $tp) (i32.const 160096) (i32.const 3)) (then (return (i32.const 2))))   ;; Dec
     (i32.const 0))
 
   ;; ---------- record / field registries (page 9) ----------
@@ -391,6 +419,144 @@
       (br $l)))
     (f64.add (f64.convert_i64_u (local.get $ip))
              (f64.div (f64.convert_i64_u (local.get $fp)) (local.get $div))))
+
+  ;; Dec (D1): parse a decimal literal's digit span (off,len; NOT including the trailing 'd'
+  ;; suffix, e.g. "1.50" or "3" or "0.000001") into an EXACT i64 scaled by 1_000_000
+  ;; (micro-units: int_part*1_000_000 + frac scaled to 6 digits). Deliberately pure integer
+  ;; accumulation, NOT $parse_float's f64 arithmetic: exactness is the entire point of Dec,
+  ;; and even one f64 division would silently reintroduce the rounding error Dec exists to
+  ;; avoid. Errors recorded via err_add (execution continues with a 0 fallback, matching the
+  ;; file's existing diagnose-and-keep-going convention, so a bad literal never aborts the
+  ;; compiler): code 5 = more than 6 fractional digits, code 6 = magnitude does not fit in
+  ;; i64 after scaling (the valid Dec range is [-(2^63-1), 2^63-1]: i64::MIN is deliberately
+  ;; excluded so every Dec value can always be safely negated, one value out of 2^64 lost).
+  (func $parse_dec_literal (param $off i32) (param $len i32) (result i64)
+    (local $i i32) (local $c i32) (local $d i64) (local $digit i64)
+    (local $dot i32) (local $fdigits i32) (local $overflow i32) (local $pad i32)
+    (local.set $i (i32.const 0)) (local.set $d (i64.const 0))
+    (local.set $dot (i32.const 0)) (local.set $fdigits (i32.const 0)) (local.set $overflow (i32.const 0))
+    (block $e (loop $l
+      (br_if $e (i32.ge_u (local.get $i) (local.get $len)))
+      (local.set $c (i32.load8_u (i32.add (local.get $off) (local.get $i))))
+      (if (i32.eq (local.get $c) (i32.const 46))   ;; '.'
+        (then (local.set $dot (i32.const 1)))
+        (else
+          (local.set $digit (i64.extend_i32_u (i32.sub (local.get $c) (i32.const 48))))
+          (if (local.get $dot) (then (local.set $fdigits (i32.add (local.get $fdigits) (i32.const 1)))))
+          ;; overflow-safe accumulate: d > (I64_MAX - digit)/10  <=>  d*10+digit would overflow
+          (if (i64.gt_s (local.get $d) (i64.div_s (i64.sub (i64.const 9223372036854775807) (local.get $digit)) (i64.const 10)))
+            (then (local.set $overflow (i32.const 1)))
+            (else (local.set $d (i64.add (i64.mul (local.get $d) (i64.const 10)) (local.get $digit)))))))
+      (local.set $i (i32.add (local.get $i) (i32.const 1)))
+      (br $l)))
+    (if (i32.gt_u (local.get $fdigits) (i32.const 6))
+      (then (call $err_add (i32.const 5) (local.get $off) (local.get $len)) (return (i64.const 0))))
+    (if (local.get $overflow)
+      (then (call $err_add (i32.const 6) (local.get $off) (local.get $len)) (return (i64.const 0))))
+    ;; pad the accumulated digits up to exactly 6 fractional digits (e.g. "1.5" -> d=15,
+    ;; pad=5 more zeros -> 1500000), with the same overflow guard on each multiply.
+    (local.set $pad (i32.sub (i32.const 6) (local.get $fdigits)))
+    (block $pe (loop $pl
+      (br_if $pe (i32.le_s (local.get $pad) (i32.const 0)))
+      (if (i64.gt_s (local.get $d) (i64.div_s (i64.const 9223372036854775807) (i64.const 10)))
+        (then (local.set $overflow (i32.const 1)) (br $pe))
+        (else (local.set $d (i64.mul (local.get $d) (i64.const 10)))))
+      (local.set $pad (i32.sub (local.get $pad) (i32.const 1)))
+      (br $pl)))
+    (if (local.get $overflow)
+      (then (call $err_add (i32.const 6) (local.get $off) (local.get $len)) (return (i64.const 0))))
+    (local.get $d))
+
+  ;; Dec (D1): exact unsigned 64x64->128 multiply via 32-bit limb decomposition (the
+  ;; Hacker's Delight technique: every partial product and intermediate sum is proven to fit
+  ;; in 64 bits, so no step needs a wider-than-64-bit register). u,v are magnitudes (the
+  ;; caller has already stripped any sign). Writes the 128-bit result to $dec_hi:$dec_lo.
+  (func $mul128 (param $u i64) (param $v i64)
+    (local $u0 i64) (local $u1 i64) (local $v0 i64) (local $v1 i64)
+    (local $w0 i64) (local $t i64) (local $w1 i64) (local $w2 i64)
+    (local.set $u0 (i64.and (local.get $u) (i64.const 0xFFFFFFFF)))
+    (local.set $u1 (i64.shr_u (local.get $u) (i64.const 32)))
+    (local.set $v0 (i64.and (local.get $v) (i64.const 0xFFFFFFFF)))
+    (local.set $v1 (i64.shr_u (local.get $v) (i64.const 32)))
+    (local.set $w0 (i64.mul (local.get $u0) (local.get $v0)))
+    (local.set $t  (i64.add (i64.mul (local.get $u1) (local.get $v0)) (i64.shr_u (local.get $w0) (i64.const 32))))
+    (local.set $w1 (i64.and (local.get $t) (i64.const 0xFFFFFFFF)))
+    (local.set $w2 (i64.shr_u (local.get $t) (i64.const 32)))
+    (local.set $w1 (i64.add (i64.mul (local.get $u0) (local.get $v1)) (local.get $w1)))
+    (global.set $dec_hi (i64.add (i64.add (i64.mul (local.get $u1) (local.get $v1)) (local.get $w2)) (i64.shr_u (local.get $w1) (i64.const 32))))
+    (global.set $dec_lo (i64.or (i64.shl (local.get $w1) (i64.const 32)) (i64.and (local.get $w0) (i64.const 0xFFFFFFFF)))))
+
+  ;; Dec (D1): unsigned 128-bit (hi:lo) / 64-bit d (d != 0) -> quotient + remainder, via
+  ;; classic bit-by-bit restoring binary long division. Correct by construction regardless
+  ;; of the divisor's magnitude (unlike a word-at-a-time scheme, which would only be safe
+  ;; for a small divisor) — this is what lets DMUL (divide by the constant 1_000_000) and
+  ;; DDIV (divide by an arbitrary Dec magnitude) share one division primitive. Writes the
+  ;; quotient to $dec_q and remainder to $dec_r; sets $dec_qoverflow if the true quotient
+  ;; needs more than 64 bits (detected by catching a 1-bit that would be shifted out of the
+  ;; 64-bit quotient register — the accumulator's sign bit already set before a left-shift
+  ;; means a bit is about to be lost).
+  (func $divmod128by64 (param $hi i64) (param $lo i64) (param $d i64)
+    (local $r i64) (local $q i64) (local $i i32) (local $bit i64) (local $qoverflow i32)
+    (local.set $r (i64.const 0)) (local.set $q (i64.const 0)) (local.set $i (i32.const 127))
+    (local.set $qoverflow (i32.const 0))
+    (block $e (loop $l
+      (br_if $e (i32.lt_s (local.get $i) (i32.const 0)))
+      (if (i32.ge_s (local.get $i) (i32.const 64))
+        (then (local.set $bit (i64.and (i64.shr_u (local.get $hi) (i64.extend_i32_u (i32.sub (local.get $i) (i32.const 64)))) (i64.const 1))))
+        (else (local.set $bit (i64.and (i64.shr_u (local.get $lo) (i64.extend_i32_u (local.get $i))) (i64.const 1)))))
+      (local.set $r (i64.or (i64.shl (local.get $r) (i64.const 1)) (local.get $bit)))
+      (if (i64.lt_s (local.get $q) (i64.const 0)) (then (local.set $qoverflow (i32.const 1))))   ;; top bit set: next shift loses it
+      (local.set $q (i64.shl (local.get $q) (i64.const 1)))
+      (if (i64.ge_u (local.get $r) (local.get $d))
+        (then (local.set $r (i64.sub (local.get $r) (local.get $d))) (local.set $q (i64.or (local.get $q) (i64.const 1)))))
+      (local.set $i (i32.sub (local.get $i) (i32.const 1)))
+      (br $l)))
+    (global.set $dec_q (local.get $q)) (global.set $dec_r (local.get $r)) (global.set $dec_qoverflow (local.get $qoverflow)))
+
+  ;; Dec (D1): a*b, exact 128-bit product then round_half_even(.../1_000_000). Half-even is
+  ;; sign-symmetric: compute on magnitudes, apply sign after (equivalent to Python decimal's
+  ;; ROUND_HALF_EVEN). Traps (unreachable, mirroring how the interpreter already lets i64
+  ;; div_s/rem_s trap on divide-by-zero: a deliberate trap is the established idiom for a
+  ;; deterministic runtime failure here) if the final magnitude exceeds the valid Dec range.
+  (func $dec_mul (param $a i64) (param $b i64) (result i64)
+    (local $neg i32) (local $q i64) (local $r i64)
+    (local.set $neg (i32.const 0))
+    (if (i64.lt_s (local.get $a) (i64.const 0)) (then (local.set $neg (i32.xor (local.get $neg) (i32.const 1))) (local.set $a (i64.sub (i64.const 0) (local.get $a)))))
+    (if (i64.lt_s (local.get $b) (i64.const 0)) (then (local.set $neg (i32.xor (local.get $neg) (i32.const 1))) (local.set $b (i64.sub (i64.const 0) (local.get $b)))))
+    (call $mul128 (local.get $a) (local.get $b))
+    (call $divmod128by64 (global.get $dec_hi) (global.get $dec_lo) (i64.const 1000000))
+    (if (global.get $dec_qoverflow) (then (unreachable)))
+    (local.set $q (global.get $dec_q)) (local.set $r (global.get $dec_r))
+    (local.set $r (i64.mul (local.get $r) (i64.const 2)))
+    (if (i64.gt_u (local.get $r) (i64.const 1000000))
+      (then (local.set $q (i64.add (local.get $q) (i64.const 1))))
+      (else (if (i64.eq (local.get $r) (i64.const 1000000))
+        (then (if (i64.ne (i64.and (local.get $q) (i64.const 1)) (i64.const 0)) (then (local.set $q (i64.add (local.get $q) (i64.const 1)))))))))
+    (if (i64.gt_u (local.get $q) (i64.const 9223372036854775807)) (then (unreachable)))
+    (if (local.get $neg) (then (return (i64.sub (i64.const 0) (local.get $q)))))
+    (local.get $q))
+
+  ;; Dec (D1): dec_div(a,b) = round_half_even(a * 1_000_000 / b). b==0 traps (mirrors the
+  ;; interpreter's existing native div-by-zero trap for Int /). Same sign/magnitude/overflow
+  ;; discipline as $dec_mul.
+  (func $dec_div (param $a i64) (param $b i64) (result i64)
+    (local $neg i32) (local $q i64) (local $r i64)
+    (if (i64.eqz (local.get $b)) (then (unreachable)))
+    (local.set $neg (i32.const 0))
+    (if (i64.lt_s (local.get $a) (i64.const 0)) (then (local.set $neg (i32.xor (local.get $neg) (i32.const 1))) (local.set $a (i64.sub (i64.const 0) (local.get $a)))))
+    (if (i64.lt_s (local.get $b) (i64.const 0)) (then (local.set $neg (i32.xor (local.get $neg) (i32.const 1))) (local.set $b (i64.sub (i64.const 0) (local.get $b)))))
+    (call $mul128 (local.get $a) (i64.const 1000000))
+    (call $divmod128by64 (global.get $dec_hi) (global.get $dec_lo) (local.get $b))
+    (if (global.get $dec_qoverflow) (then (unreachable)))
+    (local.set $q (global.get $dec_q)) (local.set $r (global.get $dec_r))
+    (local.set $r (i64.mul (local.get $r) (i64.const 2)))
+    (if (i64.gt_u (local.get $r) (local.get $b))
+      (then (local.set $q (i64.add (local.get $q) (i64.const 1))))
+      (else (if (i64.eq (local.get $r) (local.get $b))
+        (then (if (i64.ne (i64.and (local.get $q) (i64.const 1)) (i64.const 0)) (then (local.set $q (i64.add (local.get $q) (i64.const 1)))))))))
+    (if (i64.gt_u (local.get $q) (i64.const 9223372036854775807)) (then (unreachable)))
+    (if (local.get $neg) (then (return (i64.sub (i64.const 0) (local.get $q)))))
+    (local.get $q))
 
   ;; compile-error records at [90000 ..), 12 bytes each (code, name_off, name_len).
   ;; code 1 = unknown variable, code 2 = unknown function.
@@ -491,6 +657,58 @@
       (br $wl)))
     (if (local.get $neg) (then (i32.store8 (i32.add (local.get $ptr) (i32.const 4)) (i32.const 45))))
     (local.get $ptr))
+  ;; Dec (D1): runtime Dec (i64, scale 1e-6) -> Text, canonical form. Trailing fractional
+  ;; zeros are trimmed but at least one fractional digit always remains ("3.0", not "3"),
+  ;; matching a decimal literal's own shape. i64::MIN is unreachable here (see the range
+  ;; note on $parse_dec_literal), so negation is always safe.
+  (func $dec2text (param $v i64) (result i32)
+    (local $neg i32) (local $ip i64) (local $fp i64) (local $nd i32) (local $tmp i64)
+    (local $flen i32) (local $probe i64) (local $len i32) (local $ptr i32) (local $w i32)
+    (local.set $neg (i32.const 0))
+    (if (i64.lt_s (local.get $v) (i64.const 0))
+      (then (local.set $neg (i32.const 1)) (local.set $v (i64.sub (i64.const 0) (local.get $v)))))
+    (local.set $ip (i64.div_s (local.get $v) (i64.const 1000000)))
+    (local.set $fp (i64.rem_s (local.get $v) (i64.const 1000000)))
+    ;; count int-part digits (at least 1, so "0.1" prints its leading "0")
+    (local.set $nd (i32.const 1)) (local.set $tmp (local.get $ip))
+    (block $ce (loop $cl
+      (local.set $tmp (i64.div_s (local.get $tmp) (i64.const 10)))
+      (br_if $ce (i64.eqz (local.get $tmp)))
+      (local.set $nd (i32.add (local.get $nd) (i32.const 1)))
+      (br $cl)))
+    ;; trim trailing zero fractional digits, keep at least 1 (flen = digits to print; probe
+    ;; = fp with those trimmed zeros already divided out, so probe IS the value to print)
+    (local.set $flen (i32.const 6)) (local.set $probe (local.get $fp))
+    (block $te (loop $tl
+      (br_if $te (i32.le_s (local.get $flen) (i32.const 1)))
+      (br_if $te (i64.ne (i64.rem_s (local.get $probe) (i64.const 10)) (i64.const 0)))
+      (local.set $probe (i64.div_s (local.get $probe) (i64.const 10)))
+      (local.set $flen (i32.sub (local.get $flen) (i32.const 1)))
+      (br $tl)))
+    (local.set $len (i32.add (i32.add (i32.add (local.get $neg) (local.get $nd)) (i32.const 1)) (local.get $flen)))
+    (local.set $ptr (call $halloc (i32.add (i32.const 4) (local.get $len))))
+    (i32.store (local.get $ptr) (local.get $len))
+    ;; write right to left: fractional digits (fixed flen iterations -> leading zeros within
+    ;; the field are preserved, e.g. probe=5 flen=2 prints "05"), then '.', then int digits.
+    (local.set $w (i32.add (i32.add (local.get $ptr) (i32.const 4)) (local.get $len)))
+    (block $fwe (loop $fwl
+      (br_if $fwe (i32.eqz (local.get $flen)))
+      (local.set $w (i32.sub (local.get $w) (i32.const 1)))
+      (i32.store8 (local.get $w) (i32.add (i32.const 48) (i32.wrap_i64 (i64.rem_s (local.get $probe) (i64.const 10)))))
+      (local.set $probe (i64.div_s (local.get $probe) (i64.const 10)))
+      (local.set $flen (i32.sub (local.get $flen) (i32.const 1)))
+      (br $fwl)))
+    (local.set $w (i32.sub (local.get $w) (i32.const 1)))
+    (i32.store8 (local.get $w) (i32.const 46))   ;; '.'
+    (block $iwe (loop $iwl
+      (br_if $iwe (i32.eqz (local.get $nd)))
+      (local.set $w (i32.sub (local.get $w) (i32.const 1)))
+      (i32.store8 (local.get $w) (i32.add (i32.const 48) (i32.wrap_i64 (i64.rem_s (local.get $ip) (i64.const 10)))))
+      (local.set $ip (i64.div_s (local.get $ip) (i64.const 10)))
+      (local.set $nd (i32.sub (local.get $nd) (i32.const 1)))
+      (br $iwl)))
+    (if (local.get $neg) (then (i32.store8 (i32.add (local.get $ptr) (i32.const 4)) (i32.const 45))))
+    (local.get $ptr))
   ;; runtime: Text concat -> new Text
   (func $concat (param $pa i32) (param $pb i32) (result i32)
     (local $la i32) (local $lb i32) (local $ptr i32) (local $i i32)
@@ -559,6 +777,17 @@
                 (local.set $val (i32.add (i32.mul (local.get $val) (i32.const 10)) (i32.sub (local.get $c) (i32.const 48))))
                 (local.set $i (i32.add (local.get $i) (i32.const 1)))
                 (br $dl)))
+            ;; Dec literal (D1)? an integer with no fraction, immediately followed by a 'd'
+            ;; suffix (e.g. `3d`, `-3d` where the '-' is a separate unary-minus token).
+            ;; Checked before the float '.' probe below so `3d` cannot be misread as
+            ;; anything else; span excludes the 'd' (matches $parse_dec_literal's contract).
+            (if (call $is_d_suffix (local.get $i) (local.get $srclen))
+              (then
+                (call $tokset (local.get $n) (i32.const 30)
+                  (i32.add (i32.const 100000) (local.get $start)) (i32.sub (local.get $i) (local.get $start)))
+                (local.set $i (i32.add (local.get $i) (i32.const 1)))   ;; consume 'd'
+                (local.set $n (i32.add (local.get $n) (i32.const 1)))
+                (br $L)))
             ;; float? a '.' immediately followed by a digit (so `x.method` stays Int + '.')
             (if (i32.and
                   (i32.and (i32.lt_u (local.get $i) (local.get $srclen))
@@ -573,6 +802,14 @@
                     (br_if $fe (i32.eqz (call $is_digit (call $b (local.get $i)))))
                     (local.set $i (i32.add (local.get $i) (i32.const 1)))
                     (br $fl)))
+                ;; Dec literal (D1)? same 'd'-suffix probe, now after the fractional digits.
+                (if (call $is_d_suffix (local.get $i) (local.get $srclen))
+                  (then
+                    (call $tokset (local.get $n) (i32.const 30)
+                      (i32.add (i32.const 100000) (local.get $start)) (i32.sub (local.get $i) (local.get $start)))
+                    (local.set $i (i32.add (local.get $i) (i32.const 1)))   ;; consume 'd'
+                    (local.set $n (i32.add (local.get $n) (i32.const 1)))
+                    (br $L)))
                 (call $tokset (local.get $n) (i32.const 29)
                   (i32.add (i32.const 100000) (local.get $start)) (i32.sub (local.get $i) (local.get $start)))
                 (local.set $n (i32.add (local.get $n) (i32.const 1)))
@@ -697,6 +934,12 @@
     (call $emitw (i32.const 29))
     (call $emitw (i32.wrap_i64 (local.get $bits)))
     (call $emitw (i32.wrap_i64 (i64.shr_u (local.get $bits) (i64.const 32)))))
+  ;; Dec (D1): emit DPUSH (opcode 64) + the i64's two 32-bit halves, mirroring $emit_fpush.
+  ;; Simpler than FPUSH: a Dec value is already a plain i64 (no float reinterpret needed).
+  (func $emit_dpush (param $x i64)
+    (call $emitw (i32.const 64))
+    (call $emitw (i32.wrap_i64 (local.get $x)))
+    (call $emitw (i32.wrap_i64 (i64.shr_u (local.get $x) (i64.const 32)))))
   ;; Emit a binary arithmetic op given operand types `tl` (lhs, under TOS) and `tr`
   ;; (rhs, TOS). If either is Float the result is Float: coerce the Int operand
   ;; (I2F=30 converts TOS, I2FU=31 converts the value under TOS) then emit `floatop`;
@@ -721,6 +964,94 @@
       (else (call $emitw (local.get $intop))))
     (global.set $ety (i32.const 0)))
 
+  ;; ---------- Dec (D1): coercion + dispatch for +, -, *, and comparisons ----------
+  ;; Design note: rather than folding Dec into $emit_arith/$emit_cmp above (risking the
+  ;; well-tested Int/Float paths), Dec gets its own parallel helpers, gated at each call
+  ;; site by "is either operand Dec"; when neither is, the original functions run
+  ;; byte-for-byte unchanged. `opoff`/`oplen` anchor any diagnostic on the OPERATOR token
+  ;; (always a safely-positioned single-char token per the lexer's tokset convention),
+  ;; never on an operand: a bare Int operand's own token stores its numeric VALUE in the
+  ;; `a` field, not a source address (see $lex's number branch), so anchoring on an operand
+  ;; would be unsafe whenever that operand is a literal Int being auto-coerced to Dec (a
+  ;; routine, expected case for Dec, unlike for Float).
+  ;;
+  ;; Int-side coercion to Dec (DFROMI, opcode 65) converts only TOS, mirroring I2F. When the
+  ;; Int operand is instead the value UNDER TOS (lhs Int, rhs Dec — stack is [lhs, rhs] with
+  ;; rhs on top), there is no DFROMIU: instead of adding an 8th opcode beyond the brief's
+  ;; exact list, this reuses the codebase's own scratch-slot idiom ($tmp_local, already used
+  ;; by $c_match/$c_apply_try/record literals) to shuffle rhs out of the way, convert the
+  ;; now-TOS lhs, then bring rhs back:
+  ;;   SETLOCAL tmp   ; pops rhs into a fresh scratch slot -> stack [lhs]
+  ;;   DFROMI         ; converts the now-TOS lhs Int -> Dec
+  ;;   GETARG tmp     ; pushes rhs back on top -> stack [lhs_dec, rhs]
+  (func $emit_dec_arith (param $tl i32) (param $tr i32) (param $decop i32) (param $opoff i32) (param $oplen i32)
+    (local $tmp i32)
+    (if (i32.or (i32.eq (local.get $tl) (i32.const 1)) (i32.eq (local.get $tr) (i32.const 1)))
+      (then   ;; Float on one side, Dec on the other: never mix (E0007)
+        (call $err_add (i32.const 7) (local.get $opoff) (local.get $oplen))
+        (call $emitw (i32.const 3))   ;; ADD: stack-balancing fallback only; never executed (nerr>0 blocks run)
+        (global.set $ety (i32.const 2))
+        (return)))
+    (if (i32.eqz (local.get $tr)) (then (call $emitw (i32.const 65))))   ;; rhs Int -> DFROMI (TOS)
+    (if (i32.eqz (local.get $tl))
+      (then   ;; lhs Int, rhs Dec: shuffle via a scratch slot (see design note above)
+        (local.set $tmp (call $tmp_local))
+        (call $emitw (i32.const 14)) (call $emitw (local.get $tmp))
+        (call $emitw (i32.const 65))
+        (call $emitw (i32.const 2)) (call $emitw (local.get $tmp))))
+    (call $emitw (local.get $decop))
+    (global.set $ety (i32.const 2)))
+  ;; Unified entry point for '+', '-', '*': routes to $emit_dec_arith when Dec is involved,
+  ;; else calls $emit_arith exactly as before (zero change to the Int/Float path). Keeps
+  ;; each call site in $c_add/$c_mul a near-mechanical addition of two params.
+  (func $emit_arith2 (param $tl i32) (param $tr i32) (param $intop i32) (param $floatop i32) (param $decop i32) (param $opoff i32) (param $oplen i32)
+    (if (i32.or (i32.eq (local.get $tl) (i32.const 2)) (i32.eq (local.get $tr) (i32.const 2)))
+      (then (call $emit_dec_arith (local.get $tl) (local.get $tr) (local.get $decop) (local.get $opoff) (local.get $oplen)) (return)))
+    (call $emit_arith (local.get $tl) (local.get $tr) (local.get $intop) (local.get $floatop)))
+  ;; Dec-aware comparison: same Float-mix ban and Int-coercion shuffle as $emit_dec_arith,
+  ;; but Dec-Dec (once same-scaled) reuses the given INT comparison op directly — the
+  ;; same-scale invariant makes a raw i64 compare exact, so there are no separate Dec
+  ;; comparison opcodes.
+  (func $emit_dec_cmp (param $tl i32) (param $tr i32) (param $intop i32) (param $opoff i32) (param $oplen i32)
+    (local $tmp i32)
+    (if (i32.or (i32.eq (local.get $tl) (i32.const 1)) (i32.eq (local.get $tr) (i32.const 1)))
+      (then
+        (call $err_add (i32.const 7) (local.get $opoff) (local.get $oplen))
+        (call $emitw (i32.const 3))
+        (global.set $ety (i32.const 0))
+        (return)))
+    (if (i32.eqz (local.get $tr)) (then (call $emitw (i32.const 65))))
+    (if (i32.eqz (local.get $tl))
+      (then
+        (local.set $tmp (call $tmp_local))
+        (call $emitw (i32.const 14)) (call $emitw (local.get $tmp))
+        (call $emitw (i32.const 65))
+        (call $emitw (i32.const 2)) (call $emitw (local.get $tmp))))
+    (call $emitw (local.get $intop))
+    (global.set $ety (i32.const 0)))
+  (func $emit_cmp2 (param $tl i32) (param $tr i32) (param $intop i32) (param $floatop i32) (param $opoff i32) (param $oplen i32)
+    (if (i32.or (i32.eq (local.get $tl) (i32.const 2)) (i32.eq (local.get $tr) (i32.const 2)))
+      (then (call $emit_dec_cmp (local.get $tl) (local.get $tr) (local.get $intop) (local.get $opoff) (local.get $oplen)) (return)))
+    (call $emit_cmp (local.get $tl) (local.get $tr) (local.get $intop) (local.get $floatop)))
+  ;; '/' on Dec: Float-mix is checked FIRST (the more fundamental error: `1.5 / priceDec`
+  ;; should say "Float and Dec never mix", not send the user to dec_div with a Float
+  ;; argument dec_div cannot accept either). Only once Float is ruled out does a Dec operand
+  ;; (bare or Int-coerced) ban '/' outright (E0008; use dec_div). Neither operand Dec: the
+  ;; existing Int/Float '/' behavior, completely unchanged.
+  (func $c_div_op (param $tl i32) (param $opoff i32) (param $oplen i32)
+    (local $tr i32)
+    (local.set $tr (global.get $ety))
+    (if (i32.and (i32.or (i32.eq (local.get $tl) (i32.const 1)) (i32.eq (local.get $tr) (i32.const 1)))
+                 (i32.or (i32.eq (local.get $tl) (i32.const 2)) (i32.eq (local.get $tr) (i32.const 2))))
+      (then
+        (call $err_add (i32.const 7) (local.get $opoff) (local.get $oplen))
+        (call $emitw (i32.const 3)) (global.set $ety (i32.const 2)) (return)))
+    (if (i32.or (i32.eq (local.get $tl) (i32.const 2)) (i32.eq (local.get $tr) (i32.const 2)))
+      (then
+        (call $err_add (i32.const 8) (local.get $opoff) (local.get $oplen))
+        (call $emitw (i32.const 3)) (global.set $ety (i32.const 2)) (return)))
+    (call $emit_arith (local.get $tl) (local.get $tr) (i32.const 12) (i32.const 35)))
+
   (func $c_primary
     (local $off i32) (local $len i32) (local $argc i32) (local $moff i32) (local $mlen i32) (local $slot i32) (local $tag i32)
     (local $recsize i32) (local $tmpslot i32) (local $fi i32)
@@ -733,7 +1064,10 @@
         (call $c_primary)                                         ;; operand (allows -5, -x, -(e), - -x)
         (if (i32.eq (global.get $ety) (i32.const 1))
           (then (call $emitw (i32.const 31)) (call $emitw (i32.const 33)))   ;; I2FU the 0 -> FSUB (0.0 - x)
-          (else (call $emitw (i32.const 4))))                                ;; SUB
+          (else
+            (if (i32.eq (global.get $ety) (i32.const 2))
+              (then (call $emitw (i32.const 67)))    ;; DSUB (0 - x): the pushed 0 needs no coercion (0*1e6=0), and DSUB's own overflow trap covers unary negation for free
+              (else (call $emitw (i32.const 4))))))   ;; SUB
         (return)))
     (if (i32.eq (call $tk (global.get $tp)) (i32.const 2))   ;; INT
       (then
@@ -744,6 +1078,11 @@
       (then
         (call $emit_fpush (call $parse_float (call $ta (global.get $tp)) (call $tb (global.get $tp))))
         (global.set $ety (i32.const 1))
+        (call $adv) (return)))
+    (if (i32.eq (call $tk (global.get $tp)) (i32.const 30))   ;; Dec literal (D1)
+      (then
+        (call $emit_dpush (call $parse_dec_literal (call $ta (global.get $tp)) (call $tb (global.get $tp))))
+        (global.set $ety (i32.const 2))
         (call $adv) (return)))
     (if (i32.eq (call $tk (global.get $tp)) (i32.const 20))   ;; TEXT literal
       (then
@@ -820,6 +1159,25 @@
                 (call $emitw (i32.const 50))                                  ;; AGET -> field value
                 (global.set $ety (call $field_type (local.get $moff) (local.get $mlen)))
                 (return)))))
+        ;; dec_div(a, b) (D1): special-cased ahead of the generic call parsing below, because
+        ;; it needs BOTH argument types individually for coercion, and the generic argc-loop
+        ;; only leaves $ety reflecting the LAST argument once it has run. $emit_dec_arith
+        ;; already contains the full Float-mix-ban + Int-coercion + decop-emission logic, so
+        ;; this is a thin wrapper: parse "(a, b)" by hand, capture arg-a's type in $tag
+        ;; (reused here as a scratch Int local; its normal variant-tag use is finished by
+        ;; this point in a call-position parse), then let $emit_dec_arith do the rest with
+        ;; decop=DDIV(69). b==0 and overflow are runtime traps inside $dec_div, not
+        ;; compile-time concerns here.
+        (if (i32.and (i32.eq (call $tk (global.get $tp)) (i32.const 3))
+                     (call $eqlit (local.get $off) (local.get $len) (i32.const 160112) (i32.const 7)))
+          (then
+            (call $adv)   ;; '('
+            (call $c_expr) (local.set $tag (global.get $ety))
+            (if (i32.eq (call $tk (global.get $tp)) (i32.const 7)) (then (call $adv)))   ;; ','
+            (call $c_expr)
+            (if (i32.eq (call $tk (global.get $tp)) (i32.const 4)) (then (call $adv)))   ;; ')'
+            (call $emit_dec_arith (local.get $tag) (global.get $ety) (i32.const 69) (local.get $off) (local.get $len))
+            (return)))
         (if (i32.eq (call $tk (global.get $tp)) (i32.const 3))   ;; call '('  (builtin or function)
           (then
             (call $adv)
@@ -898,7 +1256,23 @@
               (if (call $eqlit (local.get $off) (local.get $len) (i32.const 248100) (i32.const 11))   ;; int_to_text(x)
                 (then (call $emitw (i32.const 18)) (global.set $ety (i32.const 0)) (return)))   ;; INT2TEXT
               (if (call $eqlit (local.get $off) (local.get $len) (i32.const 248120) (i32.const 11))   ;; text_concat(a,b)
-                (then (call $emitw (i32.const 17)) (global.set $ety (i32.const 0)) (return)))))   ;; CONCAT
+                (then (call $emitw (i32.const 17)) (global.set $ety (i32.const 0)) (return)))   ;; CONCAT
+              (if (call $eqlit (local.get $off) (local.get $len) (i32.const 160128) (i32.const 11))   ;; dec_to_text(d) (D1): canonical decimal string
+                (then
+                  (if (i32.eq (global.get $ety) (i32.const 1))
+                    (then (call $err_add (i32.const 7) (local.get $off) (local.get $len)))
+                    (else (if (i32.eqz (global.get $ety)) (then (call $emitw (i32.const 65))))))   ;; Int arg -> DFROMI (TOS)
+                  (call $emitw (i32.const 70)) (global.set $ety (i32.const 0)) (return)))))        ;; D2TEXT -> Text
+            (if (i32.eq (local.get $len) (i32.const 12)) (then
+              (if (call $eqlit (local.get $off) (local.get $len) (i32.const 160144) (i32.const 12))   ;; dec_to_float(d) (D1): explicit, lossy Dec -> Float; no reverse float_to_dec
+                (then
+                  (if (i32.eq (global.get $ety) (i32.const 1))
+                    (then (call $err_add (i32.const 7) (local.get $off) (local.get $len)))
+                    (else (if (i32.eqz (global.get $ety)) (then (call $emitw (i32.const 65))))))   ;; Int arg -> DFROMI (TOS)
+                  (call $emitw (i32.const 30))            ;; I2F: TOS Dec(i64) -> f64, bit-identical convert
+                  (call $emit_fpush (f64.const 1000000))
+                  (call $emitw (i32.const 35))            ;; FDIV -> the real value
+                  (global.set $ety (i32.const 1)) (return)))))
             (call $emitw (i32.const 8))   ;; CALL
             (call $fixup_add (global.get $emit) (local.get $off) (local.get $len))   ;; entry resolved later
             (call $emitw (i32.const 0))   ;; placeholder entry (backpatched by $resolve_fixups)
@@ -954,18 +1328,22 @@
         (br $pl))))
 
   (func $c_mul
-    (local $tl i32)
+    (local $tl i32) (local $opoff i32) (local $oplen i32)
     (call $c_postfix)
     (local.set $tl (global.get $ety))
     (block $me
       (loop $ml
         (if (i32.eq (call $tk (global.get $tp)) (i32.const 17))   ;; '*'
-          (then (call $adv) (call $c_postfix)
-                (call $emit_arith (local.get $tl) (global.get $ety) (i32.const 11) (i32.const 34))
+          (then
+                (local.set $opoff (call $ta (global.get $tp))) (local.set $oplen (call $tb (global.get $tp)))
+                (call $adv) (call $c_postfix)
+                (call $emit_arith2 (local.get $tl) (global.get $ety) (i32.const 11) (i32.const 34) (i32.const 68) (local.get $opoff) (local.get $oplen))
                 (local.set $tl (global.get $ety)) (br $ml)))
         (if (i32.eq (call $tk (global.get $tp)) (i32.const 18))   ;; '/'
-          (then (call $adv) (call $c_postfix)
-                (call $emit_arith (local.get $tl) (global.get $ety) (i32.const 12) (i32.const 35))
+          (then
+                (local.set $opoff (call $ta (global.get $tp))) (local.set $oplen (call $tb (global.get $tp)))
+                (call $adv) (call $c_postfix)
+                (call $c_div_op (local.get $tl) (local.get $opoff) (local.get $oplen))
                 (local.set $tl (global.get $ety)) (br $ml)))
         (if (i32.eq (call $tk (global.get $tp)) (i32.const 26))   ;; '%' (Int only)
           (then (call $adv) (call $c_postfix) (call $emitw (i32.const 24))
@@ -973,31 +1351,36 @@
         (br $me))))
 
   (func $c_add
-    (local $tl i32)
+    (local $tl i32) (local $opoff i32) (local $oplen i32)
     (call $c_mul)
     (local.set $tl (global.get $ety))
     (block $ae
       (loop $al
         (if (i32.eq (call $tk (global.get $tp)) (i32.const 10))   ;; '+'
-          (then (call $adv) (call $c_mul)
-                (call $emit_arith (local.get $tl) (global.get $ety) (i32.const 3) (i32.const 32))
+          (then
+                (local.set $opoff (call $ta (global.get $tp))) (local.set $oplen (call $tb (global.get $tp)))
+                (call $adv) (call $c_mul)
+                (call $emit_arith2 (local.get $tl) (global.get $ety) (i32.const 3) (i32.const 32) (i32.const 66) (local.get $opoff) (local.get $oplen))
                 (local.set $tl (global.get $ety)) (br $al)))
         (if (i32.eq (call $tk (global.get $tp)) (i32.const 11))   ;; '-'
-          (then (call $adv) (call $c_mul)
-                (call $emit_arith (local.get $tl) (global.get $ety) (i32.const 4) (i32.const 33))
+          (then
+                (local.set $opoff (call $ta (global.get $tp))) (local.set $oplen (call $tb (global.get $tp)))
+                (call $adv) (call $c_mul)
+                (call $emit_arith2 (local.get $tl) (global.get $ety) (i32.const 4) (i32.const 33) (i32.const 67) (local.get $opoff) (local.get $oplen))
                 (local.set $tl (global.get $ety)) (br $al)))
         (br $ae))))
 
   (func $c_cmp
-    (local $tl i32)
+    (local $tl i32) (local $opoff i32) (local $oplen i32)
     (call $c_add)
     (local.set $tl (global.get $ety))
-    (if (i32.eq (call $tk (global.get $tp)) (i32.const 12)) (then (call $adv) (call $c_add) (call $emit_cmp (local.get $tl) (global.get $ety) (i32.const 5)  (i32.const 36)) (return)))   ;; <
-    (if (i32.eq (call $tk (global.get $tp)) (i32.const 21)) (then (call $adv) (call $c_add) (call $emit_cmp (local.get $tl) (global.get $ety) (i32.const 19) (i32.const 40)) (return)))   ;; ==
-    (if (i32.eq (call $tk (global.get $tp)) (i32.const 22)) (then (call $adv) (call $c_add) (call $emit_cmp (local.get $tl) (global.get $ety) (i32.const 20) (i32.const 41)) (return)))   ;; !=
-    (if (i32.eq (call $tk (global.get $tp)) (i32.const 23)) (then (call $adv) (call $c_add) (call $emit_cmp (local.get $tl) (global.get $ety) (i32.const 21) (i32.const 37)) (return)))   ;; <=
-    (if (i32.eq (call $tk (global.get $tp)) (i32.const 24)) (then (call $adv) (call $c_add) (call $emit_cmp (local.get $tl) (global.get $ety) (i32.const 22) (i32.const 39)) (return)))   ;; >=
-    (if (i32.eq (call $tk (global.get $tp)) (i32.const 25)) (then (call $adv) (call $c_add) (call $emit_cmp (local.get $tl) (global.get $ety) (i32.const 23) (i32.const 38)))))           ;; >
+    (local.set $opoff (call $ta (global.get $tp))) (local.set $oplen (call $tb (global.get $tp)))
+    (if (i32.eq (call $tk (global.get $tp)) (i32.const 12)) (then (call $adv) (call $c_add) (call $emit_cmp2 (local.get $tl) (global.get $ety) (i32.const 5)  (i32.const 36) (local.get $opoff) (local.get $oplen)) (return)))   ;; <
+    (if (i32.eq (call $tk (global.get $tp)) (i32.const 21)) (then (call $adv) (call $c_add) (call $emit_cmp2 (local.get $tl) (global.get $ety) (i32.const 19) (i32.const 40) (local.get $opoff) (local.get $oplen)) (return)))   ;; ==
+    (if (i32.eq (call $tk (global.get $tp)) (i32.const 22)) (then (call $adv) (call $c_add) (call $emit_cmp2 (local.get $tl) (global.get $ety) (i32.const 20) (i32.const 41) (local.get $opoff) (local.get $oplen)) (return)))   ;; !=
+    (if (i32.eq (call $tk (global.get $tp)) (i32.const 23)) (then (call $adv) (call $c_add) (call $emit_cmp2 (local.get $tl) (global.get $ety) (i32.const 21) (i32.const 37) (local.get $opoff) (local.get $oplen)) (return)))   ;; <=
+    (if (i32.eq (call $tk (global.get $tp)) (i32.const 24)) (then (call $adv) (call $c_add) (call $emit_cmp2 (local.get $tl) (global.get $ety) (i32.const 22) (i32.const 39) (local.get $opoff) (local.get $oplen)) (return)))   ;; >=
+    (if (i32.eq (call $tk (global.get $tp)) (i32.const 25)) (then (call $adv) (call $c_add) (call $emit_cmp2 (local.get $tl) (global.get $ety) (i32.const 23) (i32.const 38) (local.get $opoff) (local.get $oplen)))))           ;; >
 
   ;; logical 'not' (prefix): not x  ==  (x == 0).  Binds looser than a comparison
   ;; (its operand is a full comparison, so `not a == b` is `not (a == b)`) and
@@ -1649,6 +2032,42 @@
           (call $opush (i64.shr_u (local.get $a) (local.get $bb))) (br $loop)))
         (if (i32.eq (local.get $op) (i32.const 63)) (then           ;; BNOT a -> ~a
           (call $opush (i64.xor (call $opop) (i64.const -1))) (br $loop)))
+        ;; ---- Dec (D1): exact decimal, i64 scaled by 1_000_000. Overflow/div-by-zero trap
+        ;; via `unreachable`, the same deterministic-WASM-trap idiom the interpreter already
+        ;; relies on for Int '/' and '%' (i64.div_s/rem_s trap natively on a zero divisor;
+        ;; there is no explicit check for that in this file either) ----
+        (if (i32.eq (local.get $op) (i32.const 64)) (then           ;; DPUSH lo hi: push a Dec i64 literal (two 32-bit halves, like FPUSH)
+          (call $opush (i64.or
+            (i64.extend_i32_u (call $codew (global.get $pc)))
+            (i64.shl (i64.extend_i32_u (call $codew (i32.add (global.get $pc) (i32.const 1)))) (i64.const 32))))
+          (global.set $pc (i32.add (global.get $pc) (i32.const 2))) (br $loop)))
+        (if (i32.eq (local.get $op) (i32.const 65)) (then           ;; DFROMI: TOS Int -> Dec (i64 * 1_000_000), overflow traps
+          (local.set $a (call $opop))
+          (if (i32.or (i64.gt_s (local.get $a) (i64.const 9223372036854)) (i64.lt_s (local.get $a) (i64.const -9223372036854)))
+            (then (unreachable)))
+          (call $opush (i64.mul (local.get $a) (i64.const 1000000))) (br $loop)))
+        (if (i32.eq (local.get $op) (i32.const 66)) (then           ;; DADD: exact i64 add, overflow (or landing on the excluded i64::MIN) traps
+          (local.set $bb (call $opop)) (local.set $a (call $opop))
+          (local.set $t (i64.add (local.get $a) (local.get $bb)))
+          (if (i32.or (i64.lt_s (i64.and (i64.xor (local.get $a) (local.get $t)) (i64.xor (local.get $bb) (local.get $t))) (i64.const 0))
+                      (i64.eq (local.get $t) (i64.const -9223372036854775808)))
+            (then (unreachable)))
+          (call $opush (local.get $t)) (br $loop)))
+        (if (i32.eq (local.get $op) (i32.const 67)) (then           ;; DSUB (a - b): exact i64 sub, overflow (or i64::MIN) traps
+          (local.set $bb (call $opop)) (local.set $a (call $opop))
+          (local.set $t (i64.sub (local.get $a) (local.get $bb)))
+          (if (i32.or (i64.lt_s (i64.and (i64.xor (local.get $a) (local.get $bb)) (i64.xor (local.get $a) (local.get $t))) (i64.const 0))
+                      (i64.eq (local.get $t) (i64.const -9223372036854775808)))
+            (then (unreachable)))
+          (call $opush (local.get $t)) (br $loop)))
+        (if (i32.eq (local.get $op) (i32.const 68)) (then           ;; DMUL: Dec*Dec, exact 128-bit product, round-half-even /1e6, overflow traps
+          (local.set $bb (call $opop)) (local.set $a (call $opop))
+          (call $opush (call $dec_mul (local.get $a) (local.get $bb))) (br $loop)))
+        (if (i32.eq (local.get $op) (i32.const 69)) (then           ;; DDIV: dec_div(a,b) = round_half_even(a*1e6/b); b==0 or overflow traps
+          (local.set $bb (call $opop)) (local.set $a (call $opop))
+          (call $opush (call $dec_div (local.get $a) (local.get $bb))) (br $loop)))
+        (if (i32.eq (local.get $op) (i32.const 70)) (then           ;; D2TEXT: pop Dec -> push Text ptr (canonical form)
+          (call $opush (i64.extend_i32_u (call $dec2text (call $opop)))) (br $loop)))
         (if (i32.eq (local.get $op) (i32.const 10)) (then (call $print_i64 (call $opop)) (br $loop)))
         (br $halt)))
     (global.set $last_steps (local.get $fuel)))

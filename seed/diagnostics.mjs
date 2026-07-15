@@ -19,6 +19,14 @@ const REGISTRY = {
        explain: 'A token appeared where no construct can begin. The compiler recovered by skipping it; the confident fix deletes it.' },
   4: { id: 'E0004', sev: 'error', msg: "expected '}'", fix: 'insert-brace',
        explain: 'A block was opened with `{` but the end of input arrived before its closing `}`. The confident fix inserts the missing brace.' },
+  5: { id: 'E0005', sev: 'error', msg: 'decimal literal has too many fractional digits', fix: null,
+       explain: 'A Dec literal (the `d` suffix, e.g. 1.50d) carries at most 6 fractional digits (Dec\'s fixed scale is 1e-6, one micro-unit). Round the literal to 6 or fewer digits after the point, or compute the extra precision at runtime with dec_div.' },
+  6: { id: 'E0006', sev: 'error', msg: 'decimal literal is too large to represent', fix: null,
+       explain: 'A Dec literal, scaled by 1,000,000, does not fit in a signed 64-bit integer (the valid magnitude is at most 9223372036854775807; the largest whole-number Dec literal is 9223372036854d). Use a smaller magnitude.' },
+  7: { id: 'E0007', sev: 'error', msg: 'Float and Dec cannot mix', fix: null,
+       explain: 'Dec (exact fixed-point) and Float (binary floating point) are never implicitly convertible: mixing them in one expression would silently reintroduce the rounding error Dec exists to avoid. Convert explicitly with dec_to_float(d) (Dec -> Float, lossy; there is no reverse float_to_dec), or keep both operands the same type.' },
+  8: { id: 'E0008', sev: 'error', msg: 'cannot divide Dec directly; use dec_div(a, b)', fix: null,
+       explain: 'The / operator is undefined for Dec (including an Int mixed with Dec) because a bare division can produce a result that needs more than 6 fractional digits, and truncating it silently would reintroduce non-exact results. Use dec_div(a, b), which performs the division with an explicit, documented rounding rule (round-half-to-even) and traps on division by zero or on overflow. Not machine-auto-applied by `lumen fix`: rewriting `a / b` into `dec_div(a, b)` needs each operand\'s own source span, and a bare Int operand (a routine, expected case for Dec) does not retain one in the token stream (see $lex\'s number branch) -- so the confident-fix schema intentionally is not extended for this one code. The message above is the fix.' },
 };
 const UNKNOWN = { id: 'E0000', sev: 'error', msg: 'error', fix: null, explain: 'Unclassified compiler error.' };
 
