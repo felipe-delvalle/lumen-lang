@@ -68,7 +68,7 @@ The **IR / opcode model** and **execution model** the wat defined
 keystone `load8`/`store8`/`load32`/`store32`, bitwise `band`/`bor`/`bxor`/`shl`/`shr`/`bnot`) is
 unchanged - `native/ir_interpreter.mjs` and the native binaries all still implement exactly it.
 
-Two deliberate, narrowly-scoped wasm exceptions remain (both isolated to `native/`, both lazy-
+Three deliberate, narrowly-scoped wasm exceptions remain (all isolated to `native/`, all lazy-
 loaded so no other importer pays their cost):
 
 - `native/fuel_build.mjs` - a one-time fuel-instrumented rebuild of the retired wat, kept only as a
@@ -77,6 +77,9 @@ loaded so no other importer pays their cost):
   its one remaining caller (`llvm_diff.mjs`, `llvm_float_test.mjs`, `arm64_spike_check.mjs`,
   `seed/lumen_mcp.mjs`'s `lumen_emit_llvm` tool) still runs it interpreted atop the wat via wabt,
   loaded lazily and only when an LLVM path is actually invoked.
+- `native/selfcompile_diff.mjs` - the GAP-A/GAP-B gate deliberately instantiates the retired wat
+  (`WebAssembly.instantiate` + a single `console_print` import) as its independent oracle for
+  `lumenc.lm` compiling itself, the same oracle pattern this section already describes above.
 
 `wabt` is retained as a devDependency of `native/package.json` ONLY for these two exceptions; no
 other `package.json` in the repo depends on it.
