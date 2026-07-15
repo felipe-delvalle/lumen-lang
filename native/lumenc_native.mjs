@@ -20,7 +20,8 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { execFileSync } from 'node:child_process';
-import { freshInstance, writeSrc, emitWith, EMIT_FN_BASE, EMIT_FN_CEIL } from './pipeline.mjs';
+import { emitWith, EMIT_FN_BASE, EMIT_FN_CEIL } from './pipeline.mjs';
+import { compileToIRNativeRaw } from './native_compile.mjs';
 
 const CODE_BASE = 11328;      // emitted IR words (matches seed/compiler_core.mjs CODE_BASE)
 const SRC_BASE = 100000;      // SRC() in the seed's memory map
@@ -50,51 +51,17 @@ const DIAG_RECORD_CAP = Math.floor((DIAG_CEIL - DIAG_BASE) / 12);   // 500 (code
 const EMIT_FN_SRC = fs.readFileSync(new URL('./emit_fn.lm', import.meta.url), 'utf8');
 const LUMENC_SRC = fs.readFileSync(new URL('../seed/lumenc.lm', import.meta.url), 'utf8');
 
-// Compile lumenc.lm with the seed once, returning the RAW IR (words/main/strings) plus the
-// lex_compile entry pc, all read from the one instance that produced them.
+// Compile lumenc.lm with the native compiler once, returning the RAW IR (words/main/strings)
+// plus the lex_compile entry pc, all from the SAME compileToIRNativeRaw call that produced
+// them (R5: this used to re-derive strings/symbols by scanning a wasm instance's own memory;
+// compileToIRNativeRaw now returns all three directly - see native/native_compile.mjs's R5
+// symbol-table trailer - so this is simpler than the wasm-era version, not just wasm-free).
 async function compileLumencRaw() {
-  const I = await freshInstance();
-  const len = writeSrc(I, LUMENC_SRC);
-  const irWords = I.ex.compile(len);
-  if (I.ex.dbg_nerr() > 0) throw new Error(`lumenc.lm compile: ${I.ex.dbg_nerr()} error(s)`);
-  const main = I.ex.dbg_main();
-  const words = Int32Array.from(new Int32Array(I.ex.mem.buffer, CODE_BASE, irWords));
-
-  // strings sidecar - identical walk to compileToIR in pipeline.mjs
-  const ptrs = [];
-  let pc = 0;
-  while (pc < words.length) {
-    const op = words[pc];
-    if (op === 57) { pc = pc + 3 + words[pc + 1]; continue; }
-    if (op === 15) ptrs.push(words[pc + 1]);
-    let oplen = 0;
-    if (op === 1 || op === 2 || op === 6 || op === 7 || op === 13 || op === 14 || op === 15 || op === 25) oplen = 1;
-    else if (op === 8 || op === 29) oplen = 2;
-    pc = pc + 1 + oplen;
-  }
-  const uniquePtrs = [...new Set(ptrs)];
-  const view = new DataView(I.ex.mem.buffer);
-  const mem8 = new Uint8Array(I.ex.mem.buffer);
-  const strings = uniquePtrs.map(ptr => {
-    const slen = view.getInt32(ptr, true);
-    const bytes = mem8.slice(ptr + 4, ptr + 4 + slen);
-    return { ptr, len: slen, bytes };
-  });
-
-  // symbol table scan - same region/stride/technique as seed/selfhost_diff.mjs
-  let lexCompileEntry = -1;
-  for (let addr = SYMTAB_BASE; addr < SYMTAB_CEIL; addr += 12) {
-    const name_off = view.getInt32(addr, true);
-    const name_len = view.getInt32(addr + 4, true);
-    const entry = view.getInt32(addr + 8, true);
-    if (name_off >= SRC_BASE && name_off < SYMTAB_BASE && name_len > 0) {
-      const name = Buffer.from(mem8.slice(name_off, name_off + name_len)).toString('utf8');
-      if (name === 'lex_compile') lexCompileEntry = entry;
-    }
-  }
-  if (lexCompileEntry === -1) throw new Error('lex_compile entry not found in lumenc.lm symbol table');
-
-  return { words, main, strings, lexCompileEntry };
+  const r = compileToIRNativeRaw(LUMENC_SRC);
+  if (r.nerr > 0) throw new Error(`lumenc.lm compile: ${r.nerr} error(s)`);
+  const sym = r.symbols.find((s) => s.name === 'lex_compile');
+  if (!sym) throw new Error('lex_compile entry not found in lumenc.lm symbol table');
+  return { words: r.words, main: r.main, strings: r.strings, lexCompileEntry: sym.entry };
 }
 
 // Replace the emitter's one-shot `int main(void){...f<main>();return 0;}` with a driver that
