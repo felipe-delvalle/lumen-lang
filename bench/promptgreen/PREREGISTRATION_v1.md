@@ -11,14 +11,16 @@ This document changes no code and flips no scorecard verdict; it is prose and st
 
 ## Scope of v1 (interim, read this before the headline claim)
 
-This registers the CURRENT 10-task scale as interim only. `docs/LUMEN_UNIVERSAL_COVERAGE_PLAN.md`
-section 4's target is >= 100 frozen tasks; that scale gets its own v2 registration once the
-corpus grows (WP-promptgreen). At n=10, a one-sided Wilcoxon's best-case exact p-value (all 10
-pairs favor one arm, no ties) is (1/2)^10 ~= 0.00098, so alpha=0.05 is technically reachable,
-but only for a large, near-unanimous effect; this design has essentially no power to detect a
-modest one. A confirmed H1 here is an honest interim signal at n=10, not the production
-"beats Python" claim, which needs the >= 100-task, Arc 3-scale rig. Say this out loud so nobody
-downstream quotes v1's n=10 as if it were that rig.
+This registers the CURRENT 10-task repo scale as interim only, of which 8 are held-out and
+statistically counted; the other 2 are the dev shard, not counted (see Shard design below for
+why the split is 8-and-2 rather than all 10). `docs/LUMEN_UNIVERSAL_COVERAGE_PLAN.md` section
+4's target is >= 100 frozen tasks; that scale gets its own v2 registration once the corpus
+grows (WP-promptgreen). At n=8, a one-sided Wilcoxon's best-case exact p-value (all 8 pairs
+favor one arm, no ties) is (1/2)^8 ~= 0.0078, so alpha=0.05 is technically reachable, but only
+for a large, near-unanimous effect; this design has essentially no power to detect a modest
+one. A confirmed H1 here is an honest interim signal at n=8, not the production "beats Python"
+claim, which needs the >= 100-task, Arc 3-scale rig. Say this out loud so nobody downstream
+quotes v1's n=8 as if it were that rig.
 
 ## Hypotheses
 
@@ -83,7 +85,7 @@ this specific pinned model, this sealed shard, this context configuration, on th
   rules below.
 - **Secondary: one-shot-solved rate.** Paired binary outcome per task. McNemar's exact test
   (binomial form, not the chi-square approximation, given the small expected count of
-  discordant pairs at n=10), alpha = 0.05, on the discordant pairs only.
+  discordant pairs at n=8), alpha = 0.05, on the discordant pairs only.
 - **Secondary: solved-rate-at-cap.** Same construction as one-shot-solved rate (paired binary,
   McNemar's exact test), evaluated at round 5 instead of round 1: does the task ever solve
   within budget, regardless of how many rounds it took.
@@ -139,9 +141,10 @@ not yet a running check.
 
 - **Dev shard (public, iteration).** Used to debug the harness, the author-integration, and the
   prompting before any sealed run. Never contributes an observation to H1, H2, or H3.
-- **Held-out shard (the primary evaluation set): today's full 10 tasks, `t01` through `t10`,
-  n=10, interim.** Sealed by a SHA-256 hash over a tarball of the held-out task directories,
-  committed here before any run:
+- **Held-out shard (the primary evaluation set): `t03` through `t10`, n=8, interim,** drawn from
+  today's repo total of 10 tasks (`t01` through `t10`; the other 2 are the dev shard above; see
+  the honesty note below for why the split is 8-and-2 rather than sealing all 10). Sealed by a
+  SHA-256 hash over a tarball of the held-out task directories, committed here before any run:
   ```
   held_out_sha256 = f857f95825a4ce979af65c7a68e9964404428649ce2c3a03fcf930aec3828383
   ```
@@ -176,6 +179,38 @@ not yet a running check.
   variants) is reported explicitly as the fingerprint of a memorized-idiom advantage on the
   exact sealed phrasing rather than genuine problem-solving, whichever arm it appears in.
 
+### The public-leakage vector, stated plainly
+
+(a) The seal above proves immutability (the tasks were not modified after this hash was
+computed) and lets a reader detect selection bias (no task was added or dropped after seeing
+results); it does not, and cannot, claim the tasks are unseen by any model. This repository is
+public, and the sealed tasks together with their `reference.lm` solutions have been in git
+history since before this document existed.
+
+(b) Because the reference solutions are public, verbatim or near-verbatim regurgitation by the
+pinned model is possible in principle. This is the dangerous direction, not the safe one: it
+would inflate the Lumen arm specifically, since Python's solutions are not drawn from this
+repo, biasing H1, H2, and H3 toward confirming the hypothesis rather than away from it. A
+confirmed H1 that is actually memorization, not genuine authorship, is worse than an honest
+null, because it would be believed.
+
+(c) The metamorphic shard (semantics-preserving transforms of the held-out tasks, with
+regenerated hidden tests) is the control for exactly this: a model that memorized the sealed
+phrasing rather than the underlying problem should measurably underperform on its metamorphic
+sibling. It does not exist yet, which is one more reason v1 is a pilot and not the production
+claim (see Scope above).
+
+(d) Until the metamorphic control exists, the v1 disposition adds one rule: any Lumen solution
+suspiciously close to its task's `reference.lm` is flagged and reported alongside the headline
+number, never silently folded into a plain win. "Suspiciously close" is fixed now, before any
+run: normalized Levenshtein edit distance (edit distance divided by the longer of the two
+source lengths in characters) below 0.15, i.e. 85% or more character-level similarity to the
+reference, computed on the raw submitted source. No formatter exists yet to canonicalize
+whitespace first (`lumen fmt` is Arc 2 batteries work, not shipped today), which is itself a
+known limitation of this crude check, stated rather than hidden. A flagged solution does not by
+itself falsify H1; it is reported as a caveat on whichever result it touches, with the count of
+flagged solutions stated directly beside the headline ratio.
+
 ## Falsifiers
 
 H1 is falsified by any of: the one-sided Wilcoxon p-value is >= 0.05; the bootstrap 95% CI on
@@ -195,7 +230,7 @@ ledger, and the row prose together):
   `docs/VELOCITY_LEDGER.md` gets a new entry, and `VISION_2036.md` / `LANGUAGE_COMPARISON.md`
   row 9 (and row 13, which the scoreboard's own note already ties to the same loop) update in
   that same PR, per `tools/scoreboard_gate.mjs --check`'s flip-coupling rule. Reported as an
-  interim, n=10 signal, not the Arc 3 production claim.
+  interim, n=8 signal, not the Arc 3 production claim.
 - **H1 falsified (Python wins, or the CI includes 1.0).** The measured ratio is published
   exactly as measured, machine-written into `bench/DASHBOARD.md`, with no re-run and no
   post-hoc task exclusion. `bench/scoreboard.json` dimension 9 (`field_verdict: lost-must-earn`,
