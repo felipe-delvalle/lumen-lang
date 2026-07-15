@@ -29,15 +29,15 @@ npm test                               # conformance + safety + loop + cache gat
 The runnable conformance programs live in `mu/examples/`. (The top-level `examples/`
 directory holds forward-looking programs that exercise not-yet-landed syntax.)
 
-## Document map
+## The document map
 
 - [`VISION_2035.md`](VISION_2035.md): the ten-year destination and the bets.
-- [`docs/ROADMAP_2036.md`](docs/ROADMAP_2036.md): the plan of record - arcs, exit gates, kill criteria.
-- [`VISION_2036.md`](VISION_2036.md) and [`LANGUAGE_COMPARISON.md`](LANGUAGE_COMPARISON.md): the scored competitive case, against Python and then against the field.
-- [`bench/scoreboard.json`](bench/scoreboard.json) (rendered into [`bench/DASHBOARD.md`](bench/DASHBOARD.md)): the living verdicts behind both scorecards.
-- [`docs/VELOCITY_LEDGER.md`](docs/VELOCITY_LEDGER.md): wall-clock per feature, failing-test to landed.
-- [`RULES.md`](RULES.md): the day-to-day laws every change is gated on.
-- [`docs/MANIFESTO.md`](docs/MANIFESTO.md): the why.
+- [`VISION_2036.md`](VISION_2036.md) and [`LANGUAGE_COMPARISON.md`](LANGUAGE_COMPARISON.md): the scored competitive case, against the incumbent and then against the field.
+- [`docs/ROADMAP_2036.md`](docs/ROADMAP_2036.md): the plan of record.
+- [`RULES.md`](RULES.md): the operating laws and the canonical metric names.
+- [`bench/scoreboard.json`](bench/scoreboard.json) and [`bench/DASHBOARD.md`](bench/DASHBOARD.md): the live verdicts and numbers.
+- [`SELFHOST_CAMPAIGN_LOG.md`](SELFHOST_CAMPAIGN_LOG.md) and [`docs/VELOCITY_LEDGER.md`](docs/VELOCITY_LEDGER.md): the receipts.
+- [`LANGUAGE.md`](LANGUAGE.md) and [`ARCHITECTURE.md`](ARCHITECTURE.md): the language and the repo, as they are today.
 
 ## Official file extension
 

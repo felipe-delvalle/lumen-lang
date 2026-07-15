@@ -1,8 +1,9 @@
 # Lumen Roadmap
 
 > **Current status (2026-07-03): the self-hosting fixpoint is reached.** The phase plan below
-> is the original design-era roadmap, kept as the plan of record; the project has since moved
-> far faster than its phase numbering. Where things actually stand:
+> is the original design-era roadmap, kept as that: a historical record, not the current plan
+> of record (see the pointer below); the project has since moved far faster than its phase
+> numbering. Where things actually stand:
 > - **Phase 1-3 (seed, front end, run):** DONE. The pure-WAT seed (`seed/lumenc.wat`) lexes,
 >   parses, type-checks, and runs the full Lumen-mu corpus deterministically, with structured
 >   diagnostics and the MCP/daemon feedback loop live.

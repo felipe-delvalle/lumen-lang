@@ -230,12 +230,13 @@ regressions, and they do not relax with scale:
 7. **Corpus instrumentation always on.** No trace is ever lost; the data moat starts at zero
    and only compounds if collection never pauses.
 8. **The purity gate** (from Arc 1 on): nothing non-Lumen enters the shipped path, ever.
-9. **A verdict flip rides the same PR as its gate.** `bench/scoreboard.json`, `docs/VELOCITY_LEDGER.md`
-   where the flip is feature-velocity-tracked, and the row's own prose in whichever of
-   `LANGUAGE_COMPARISON.md`, `VISION_2036.md`, or `VISION_2035.md` carries it move together, in one
-   changeset, never separately. `tools/scoreboard_gate.mjs --check`'s flip-coupling rule enforces
-   this mechanically: a verdict cannot change unless at least one of its cited evidence files
-   changes in the same diff, so a claim can never outrun the artifact that earns it.
+9. **A verdict flip rides the same PR as its gate.** A scorecard verdict flips only in the PR
+   that lands its gate, and that PR updates together: `bench/scoreboard.json` (the verdict, its
+   evidence, and `last_flip`), `docs/VELOCITY_LEDGER.md` when a feature lands, and the affected
+   row's own prose in `VISION_2036.md` or `LANGUAGE_COMPARISON.md` when a verdict crosses a
+   bucket; `bench/DASHBOARD.md` then re-renders from the JSON. A verdict changed anywhere
+   without its gate landing in the same diff is a review-blocking violation, not a style note.
+   `tools/scoreboard_gate.mjs --check`'s flip-coupling rule is the mechanical backstop.
 
 ## 5. The next 90 days (the immediate work packages)
 
@@ -273,11 +274,16 @@ In dependency order, each PR-sized or a short campaign:
    language, `docs/DATA_RIGHTS.md`); trademark filing is a legal action outside the repo and
    its status cannot be verified from the tree.
 
-Beyond this original list, the wasm-removal campaign advanced Arc 1's air-gap goal further
-than planned here: the reproducible C bootstrap trio (compiler, #62; emitter and optimizer
-together, #64), the native-only compile-and-run backend with its corpus parity gate (R2, #63),
-and the resident native compiler server (R3, #65) have all landed. The full air-gap test is
-still not green (the purity gate stays advisory, per item 1 above).
+Beyond this original list, two initiatives it did not itemize have also landed. The
+wasm-removal campaign advanced Arc 1's air-gap goal further than planned here: the reproducible
+C bootstrap trio (compiler, R1, #62; emitter and optimizer together, R4, #64), the native-only
+compile-and-run backend with its corpus parity gate (R2, #63), and the resident native compiler
+server (R3, #65) have all landed. The full air-gap test is still not green (the purity gate
+stays advisory, per item 1 above). Separately, exact-decimal money (the number-story axis named
+in `VISION_2035.md`'s five gates, not literally one of these nine items) landed its first layer:
+the seed's `Dec` type, `1.50d` literal, and interpreter arithmetic (D1, #68); the native emitters,
+self-hosted-compiler parity, and the Python-decimal oracle gate remain open before that axis
+itself can read closed.
 
 ## 6. Economics, staged to the arcs
 
