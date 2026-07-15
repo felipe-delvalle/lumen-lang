@@ -60,8 +60,9 @@ at runtime (verified empirically - deleting it breaks `native/llvm_diff.mjs` and
 `native/llvm_float_test.mjs`, both still required gates in `.github/workflows/gate.yml`, with
 `ENOENT`). Physical deletion is a one-line follow-up once `emit_llvm.lm` gets its own bootstrap-C
 translation (see `native/native_compile.mjs`'s header comment on the 46-error parser gap blocking
-that); until then the file stays checked in, read only by the two exceptions. The **IR / opcode
-model** and **execution model** it defined
+that); until then the file stays checked in, read only by the two exceptions.
+
+The **IR / opcode model** and **execution model** the wat defined
 (stack machine, `PUSH`/`GETARG`/arithmetic/comparisons, `JZ`/`JMP`, `CALL`/`RET`,
 `RESERVE`/`SETLOCAL` call frames, `PRINTINT`/`PRINTTEXT`, text/sum-type ops, floats, the raw-memory
 keystone `load8`/`store8`/`load32`/`store32`, bitwise `band`/`bor`/`bxor`/`shl`/`shr`/`bnot`) is
