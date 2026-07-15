@@ -17,8 +17,9 @@ export const OPS = {0:'HALT',1:'PUSH',2:'GETARG',3:'ADD',4:'SUB',5:'LT',6:'JZ',7
   16:'PRINTTEXT',17:'CONCAT',18:'INT2TEXT',19:'EQ',20:'NE',21:'LE',22:'GE',23:'GT',24:'MOD',
   25:'MKSUM',26:'SUMTAG',27:'SUMVAL',28:'TEXTEQ',
   53:'LOAD32',54:'STORE32',55:'LOAD8',56:'STORE8',   // raw-memory keystone (self-host + native emitter/optimizer)
-  58:'BAND',59:'BOR',60:'BXOR',61:'SHL',62:'SHR',63:'BNOT'};   // bitwise builtins (stack ops, no inline operands)
-const ONE_OPERAND = new Set([1,2,6,7,13,14,15,25]);
+  58:'BAND',59:'BOR',60:'BXOR',61:'SHL',62:'SHR',63:'BNOT',   // bitwise builtins (stack ops, no inline operands)
+  64:'DPUSH',65:'DFROMI',66:'DADD',67:'DSUB',68:'DMUL',69:'DDIV',70:'D2TEXT'};   // Dec: exact decimal, i64 scale 1e-6 (D1)
+const ONE_OPERAND = new Set([1,2,6,7,13,14,15,25]);   // DPUSH is two-operand (like FPUSH=29, also absent from this set) -- see ir()'s own op===8/29-style special-casing if ever extended
 
 // Create a warm compiler. `await createCompiler()` once, reuse forever.
 export async function createCompiler() {
