@@ -39,7 +39,7 @@ jobs:
           # seed/native installs below. actions/checkout@v4 is shallow by default; the script's
           # own `git fetch origin main --depth=1` (tolerated if it fails) is what makes
           # flip-coupling work despite that, per tools/scoreboard_gate.mjs's own comments.
-          node tools/scoreboard_gate.mjs --check
+          node tools/scoreboard_gate_test.mjs && node tools/scoreboard_gate.mjs --check
       - name: seed gates (conformance + safety + loop + cache)
         working-directory: seed
         run: |

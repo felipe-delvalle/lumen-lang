@@ -68,7 +68,53 @@ function loadScoreboard() {
 // --check: schema (incl. ids + enums), evidence-exists, flip-coupling, staleness (advisory).
 // ---------------------------------------------------------------------------
 
-function checkSchema(doc) {
+// Validates one dimension's own fields (required fields, enum membership, evidence shape,
+// last_flip). Pure - no git, no filesystem, no knowledge of sibling dimensions - so a test can
+// fixture a single malformed dimension without tripping the unrelated "missing declared ids"
+// check below. Returns an array of failure strings (empty if the dimension is valid).
+export function checkDimensionFields(dim) {
+  const failures = [];
+  const tag = `dimension ${dim && dim.id !== undefined ? dim.id : '<unknown>'}`;
+  if (typeof dim.id !== 'string') {
+    failures.push(`${tag}: id must be a string`);
+    return failures;
+  }
+  if (typeof dim.name !== 'string' || !dim.name) failures.push(`${tag}: name missing`);
+  if (dim.python_verdict !== null && !PYTHON_VERDICTS.has(dim.python_verdict)) {
+    failures.push(`${tag}: python_verdict "${dim.python_verdict}" not in {${[...PYTHON_VERDICTS].join(', ')}, null}`);
+  }
+  if (!FIELD_VERDICTS.has(dim.field_verdict)) {
+    failures.push(`${tag}: field_verdict "${dim.field_verdict}" not in {${[...FIELD_VERDICTS].join(', ')}}`);
+  }
+  if (!Array.isArray(dim.evidence)) {
+    failures.push(`${tag}: evidence must be an array`);
+  } else if (dim.field_verdict && !WEAK_FIELD_VERDICTS.has(dim.field_verdict) && dim.evidence.length === 0) {
+    failures.push(`${tag}: field_verdict "${dim.field_verdict}" is stronger than aspiration/lost and requires at least one evidence path`);
+  }
+  if (dim.last_flip !== null) {
+    failures.push(`${tag}: last_flip must be null (not yet tracked as of this scoreboard's introduction)`);
+  }
+  return failures;
+}
+
+// Validates a flat array of id strings against the declared set: duplicates, missing, unexpected
+// extras. Pure - takes plain strings, not dimension objects, so it is trivial to fixture.
+export function checkIdSet(ids) {
+  const failures = [];
+  const seen = new Set();
+  for (const id of ids) {
+    if (seen.has(id)) failures.push(`duplicate id: ${id}`);
+    seen.add(id);
+  }
+  const expected = new Set(EXPECTED_IDS);
+  const missing = EXPECTED_IDS.filter((id) => !seen.has(id));
+  const extra = [...seen].filter((id) => !expected.has(id));
+  if (missing.length) failures.push(`missing declared ids: ${missing.join(', ')}`);
+  if (extra.length) failures.push(`ids present but not in the declared set (update EXPECTED_IDS if this is intentional): ${extra.join(', ')}`);
+  return failures;
+}
+
+export function checkSchema(doc) {
   const failures = [];
   if (typeof doc.updated_commit !== 'string' || !doc.updated_commit) {
     failures.push('updated_commit missing or not a string');
@@ -80,45 +126,13 @@ function checkSchema(doc) {
     failures.push('dimensions is not an array');
     return failures;
   }
-
-  const seenIds = new Set();
-  for (const dim of doc.dimensions) {
-    const tag = `dimension ${dim && dim.id !== undefined ? dim.id : '<unknown>'}`;
-    if (typeof dim.id !== 'string') {
-      failures.push(`${tag}: id must be a string`);
-      continue;
-    }
-    if (seenIds.has(dim.id)) failures.push(`duplicate id: ${dim.id}`);
-    seenIds.add(dim.id);
-
-    if (typeof dim.name !== 'string' || !dim.name) failures.push(`${tag}: name missing`);
-
-    if (dim.python_verdict !== null && !PYTHON_VERDICTS.has(dim.python_verdict)) {
-      failures.push(`${tag}: python_verdict "${dim.python_verdict}" not in {${[...PYTHON_VERDICTS].join(', ')}, null}`);
-    }
-    if (!FIELD_VERDICTS.has(dim.field_verdict)) {
-      failures.push(`${tag}: field_verdict "${dim.field_verdict}" not in {${[...FIELD_VERDICTS].join(', ')}}`);
-    }
-    if (!Array.isArray(dim.evidence)) {
-      failures.push(`${tag}: evidence must be an array`);
-    } else if (dim.field_verdict && !WEAK_FIELD_VERDICTS.has(dim.field_verdict) && dim.evidence.length === 0) {
-      failures.push(`${tag}: field_verdict "${dim.field_verdict}" is stronger than aspiration/lost and requires at least one evidence path`);
-    }
-    if (dim.last_flip !== null) {
-      failures.push(`${tag}: last_flip must be null (not yet tracked as of this scoreboard's introduction)`);
-    }
-  }
-
-  const expected = new Set(EXPECTED_IDS);
-  const missing = EXPECTED_IDS.filter((id) => !seenIds.has(id));
-  const extra = [...seenIds].filter((id) => !expected.has(id));
-  if (missing.length) failures.push(`missing declared ids: ${missing.join(', ')}`);
-  if (extra.length) failures.push(`ids present but not in the declared set (update EXPECTED_IDS if this is intentional): ${extra.join(', ')}`);
-
+  for (const dim of doc.dimensions) failures.push(...checkDimensionFields(dim));
+  const ids = doc.dimensions.filter((d) => typeof d.id === 'string').map((d) => d.id);
+  failures.push(...checkIdSet(ids));
   return failures;
 }
 
-function checkEvidenceExists(doc) {
+export function checkEvidenceExists(doc) {
   const failures = [];
   for (const dim of doc.dimensions || []) {
     for (const p of dim.evidence || []) {
@@ -140,9 +154,40 @@ function tryGitShow(ref, relPath) {
   }
 }
 
-// A dimension "flips" when either verdict field differs from the origin/main baseline. A flip is
-// only trusted if at least one of the dimension's evidence paths also changed in this same diff -
-// otherwise the verdict moved without the artifact that would justify it.
+// Pure core: given the current doc, a baseline doc (or null if none exists / unreachable), and
+// the set of file paths that changed vs that baseline, return flip-coupling failures. No git, no
+// filesystem I/O - this is the logic worth testing, and tests fixture it directly with plain
+// objects and a Set<string>, no real repository needed.
+//
+// A dimension "flips" when either verdict field differs from the baseline. A flip is only
+// trusted if at least one of the dimension's evidence paths also changed in this same diff -
+// otherwise the verdict moved without the artifact that would justify it. Only the verdict enum
+// fields are compared (never `note`, which is prose commentary): sharpening a note's wording is
+// not a verdict change and must not demand new evidence.
+export function checkFlipCouplingPure(doc, baseline, changedFiles) {
+  if (!baseline) return [];
+  const baselineById = new Map((baseline.dimensions || []).map((d) => [d.id, d]));
+  const failures = [];
+  for (const dim of doc.dimensions || []) {
+    const before = baselineById.get(dim.id);
+    if (!before) continue; // new dimension: nothing to flip from, exempt
+    const flipped = before.python_verdict !== dim.python_verdict || before.field_verdict !== dim.field_verdict;
+    if (!flipped) continue;
+    const coupled = (dim.evidence || []).some((p) => changedFiles.has(p));
+    if (!coupled) {
+      failures.push(
+        `dimension ${dim.id}: verdict changed (python: ${before.python_verdict} -> ${dim.python_verdict}, ` +
+        `field: ${before.field_verdict} -> ${dim.field_verdict}) but none of its evidence paths changed vs ` +
+        `origin/main: ${(dim.evidence || []).join(', ') || '(no evidence listed)'}`,
+      );
+    }
+  }
+  return failures;
+}
+
+// git-facing wrapper: resolves the origin/main baseline and the changed-file set, then delegates
+// to checkFlipCouplingPure above. Stays thin and untested, like purity_gate.mjs's own git calls -
+// all the logic worth verifying lives in the pure function.
 function checkFlipCoupling(doc) {
   try {
     execSync('git fetch origin main --depth=1', { cwd: REPO_ROOT, stdio: 'ignore' });
@@ -165,7 +210,6 @@ function checkFlipCoupling(doc) {
     return [];
   }
 
-  const baselineById = new Map((baseline.dimensions || []).map((d) => [d.id, d]));
   let changedFiles;
   try {
     changedFiles = new Set(
@@ -176,22 +220,7 @@ function checkFlipCoupling(doc) {
     changedFiles = new Set();
   }
 
-  const failures = [];
-  for (const dim of doc.dimensions || []) {
-    const before = baselineById.get(dim.id);
-    if (!before) continue; // new dimension: nothing to flip from, exempt
-    const flipped = before.python_verdict !== dim.python_verdict || before.field_verdict !== dim.field_verdict;
-    if (!flipped) continue;
-    const coupled = (dim.evidence || []).some((p) => changedFiles.has(p));
-    if (!coupled) {
-      failures.push(
-        `dimension ${dim.id}: verdict changed (python: ${before.python_verdict} -> ${dim.python_verdict}, ` +
-        `field: ${before.field_verdict} -> ${dim.field_verdict}) but none of its evidence paths changed vs ` +
-        `origin/main: ${(dim.evidence || []).join(', ') || '(no evidence listed)'}`,
-      );
-    }
-  }
-  return failures;
+  return checkFlipCouplingPure(doc, baseline, changedFiles);
 }
 
 function checkStaleness(doc) {
@@ -299,4 +328,8 @@ function main() {
   console.log(`scoreboard_gate: PASS - ${doc.dimensions.length} dimensions, schema/ids/evidence/flip-coupling all clean.`);
 }
 
-main();
+// Only run the CLI when invoked directly (`node tools/scoreboard_gate.mjs ...`), not when
+// tools/scoreboard_gate_test.mjs imports this module for its exported pure functions.
+if (import.meta.url === `file://${process.argv[1]}`) {
+  main();
+}
