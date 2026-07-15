@@ -43,6 +43,103 @@ Functions may be defined in **any order**: forward references and mutual recursi
 
 There is no `Bool` type; a comparison (`a < b`) produces a truth value that `if` and logical operators consume directly.
 
+## Dec: exact decimal arithmetic
+
+`Dec` is an exact fixed-point decimal type for money and other values where binary-float
+rounding error is unacceptable (`0.1 + 0.2` as `Float` is `0.30000000000000004`; as `Dec` it
+is exactly `0.3`). Internally a `Dec` is a signed 64-bit integer holding the value scaled by
+1,000,000 (six decimal places, the scale floor / smallest representable unit is `0.000001`).
+There is no arbitrary-precision fallback: `Dec` is fixed-scale, fixed-width, and every
+operation traps (aborts) on overflow rather than silently wrapping or losing precision.
+
+**Literals.** A `Dec` literal is a decimal number followed by `d`: `1.50d`, `-3d` (no
+fractional part needed), `0.000001d` (the smallest nonzero magnitude), `9223372036854d` (the
+largest whole-number literal that fits: see Overflow below). Internally the literal's decimal
+text is parsed and multiplied by 1,000,000 at compile time; there is no runtime parsing cost.
+
+**Operators.** `+`, `-`, `*`, unary `-`, and the comparisons (`<`, `<=`, `>`, `>=`, `==`, `!=`)
+all work directly on `Dec`. Division is deliberately NOT available via `/`: a bare `/` on two
+`Dec` operands is a compile-time diagnostic, because binary division of a fixed-scale decimal
+is where silent precision loss (or an implicit choice of rounding mode) most often hides. Use
+the explicit `dec_div` builtin instead, which makes the rounding rule visible at the call site.
+
+**`Dec` and `Float` never mix.** There is no implicit or explicit conversion path between the
+two that would let a `Dec` computation silently pick up binary-float error partway through, or
+vice versa. Use `dec_to_float` for an explicit, intentionally lossy escape hatch when a `Dec`
+value must feed a `Float`-only computation (e.g. a math-library call).
+
+**`Int` coerces to `Dec` automatically**, in either operand order, wherever a `Dec` is
+expected: `3 + 19.99d` and `19.99d + 3` both coerce the bare `Int` to `Dec` and produce
+`22.99`; `dec_to_text(5)` coerces `5` to `5.0`. This coercion is the one deliberate exception
+to the "no implicit numeric conversion" rule above, because an `Int` embeds exactly into
+`Dec`'s scale with zero information loss (multiply by 1,000,000; contrast with `Dec -> Float`,
+which is lossy in the general case).
+
+**Rounding: round-half-even ("banker's rounding"), applied only where an operation's true
+result would need a **finer** grain than the fixed 1e-6 scale.** `+` and `-` are always exact
+(no rounding: two scale-1e-6 integers added or subtracted stay exact at scale 1e-6). `*`
+computes the exact product before scaling back down to 1e-6, rounding half-to-even at that
+last step; `dec_div(a, b)` computes the exact quotient at scale 1e-6, rounding half-to-even the
+same way. Half-even means an exact `.5` at the discarded digit rounds to whichever neighbor has
+an even last digit, not always up — this avoids the small systematic upward bias that
+round-half-up accumulates over many operations, which is why it is the default rounding mode
+in `decimal.Decimal` (Python) and most financial-decimal libraries.
+
+**Overflow and traps.** Every `Dec` operation is bounds-checked and aborts the program (does
+not return, does not wrap) if the true result cannot be represented:
+- `DADD`/`DSUB` (`+`/`-` on two `Dec`s): trap on signed 64-bit overflow of the underlying
+  scaled integer, **and explicitly check for a result landing exactly on `INT64_MIN`**
+  (`-9223372036854775808`) even though that value would technically fit in 64 bits — this is
+  because `Dec`'s valid range excludes `INT64_MIN` (see below), and `__builtin_add_overflow`/
+  `__builtin_sub_overflow` alone cannot see that boundary; both native lowerings (`emit_fn.lm`
+  and `emit_llvm.lm`) add the explicit `==INT64_MIN` check on top of the hardware overflow flag
+  for exactly this reason.
+- `DMUL` (`*`): the product is computed at full width (128-bit intermediate) before scaling
+  back down, so it never overflows during multiplication itself; it traps only if the final
+  scaled-and-rounded result falls outside the valid range.
+- `dec_div` (`DDIV`): traps on division by zero, and on the same out-of-range result check as
+  `DMUL`.
+- `DFROMI` (the implicit `Int -> Dec` coercion): traps if `|value| > 9223372036854` (that is,
+  `floor(INT64_MAX / 1,000,000)` on the positive side; the negative bound is the mirror image).
+  This bound is what makes `9223372036854d` the largest whole-number `Dec` literal: one unit
+  more and the scaled value would not fit. **`Dec`'s valid range excludes `INT64_MIN`
+  itself** (`-9223372036854775808`), so unlike `DADD`/`DSUB` there is no separate explicit
+  `INT64_MIN` check needed inside `DFROMI`: the `|value| > 9223372036854` bound already
+  excludes it by construction (`9223372036854 * 1,000,000 = 9223372036854000000`, which is
+  strictly greater in magnitude than `INT64_MIN`'s scaled equivalent could ever reach through
+  this coercion path, since the coercion multiplies a bounded `Int` rather than landing on the
+  boundary integer directly) — the exclusion is implied by the divisibility of the bound, not
+  enforced by a second explicit comparison the way `DADD`/`DSUB` need one.
+
+**Formatting (`dec_to_text`).** Prints the canonical decimal form: fixed at up to six
+fractional digits, trailing zeros stripped, but always at least one fractional digit (`3d`
+prints as `"3.0"`, not `"3"`; `0.000001d` prints as `"0.000001"`, not stripped further since
+its one nonzero digit is the last one).
+
+**Builtins:**
+- `dec_div(a: Dec, b: Int | Dec) -> Dec` : the only division path for `Dec`. Traps on `b == 0`
+  or on an out-of-range result.
+- `dec_to_text(d: Dec) -> Text` : canonical decimal string (see Formatting above). Also accepts
+  a bare `Int` argument via the same `Int -> Dec` coercion as everywhere else.
+- `dec_to_float(d: Dec) -> Float` : explicit, intentionally lossy conversion to `Float`. The
+  only way to move a `Dec` value into `Float`-only code (e.g. `sqrt`, `exp`).
+
+```lumen
+fn account_value(principal: Dec, rate: Dec) -> Dec {
+  return principal + dec_div(principal * rate, 100)
+}
+
+fn main(c: Console) -> Unit {
+  c.print(dec_to_text(0.1d + 0.2d))         # "0.3" - exact, unlike Float
+  c.print("\n")
+  c.print(dec_to_text(account_value(1000.00d, 5.00d)))  # "1050.0"
+}
+```
+
+See `mu/examples/decimal.lm` for the full worked transcript (every operator, both coercion
+orders, both half-even tie directions, and the overflow traps) and
+`examples/finance/accrual_dec.lm` for a small day-count accrued-interest kernel built on it.
+
 ## Functions
 
 ```lumen
