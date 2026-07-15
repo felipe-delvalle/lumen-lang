@@ -105,3 +105,8 @@ jobs:
         working-directory: .
         run: |
           node bench/promptgreen/selftest.mjs
+          # kernel_suite_bench.mjs (W6/S2) is a local/nightly Law-P wall-clock harness, same
+          # exclusion as native/native_bench.mjs above: only its PURE functions (median,
+          # spawn-cost subtraction, table rendering, the AUTO-block splice) are gated here,
+          # deterministically, with no timing assertions - never the wall-clock numbers themselves.
+          node bench/kernel_suite_selftest.mjs
