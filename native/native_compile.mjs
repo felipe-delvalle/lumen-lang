@@ -26,6 +26,11 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const BOOTSTRAP_C_PATH = path.join(__dirname, 'lumenc.bootstrap.c');
 const EMIT_FN_BOOTSTRAP_C_PATH = path.join(__dirname, 'emit_fn.bootstrap.c');
 const OPTIMIZE_BOOTSTRAP_C_PATH = path.join(__dirname, 'optimize.bootstrap.c');
+// NOTE: there is no lumellvm.bootstrap.c. emit_llvm.lm cannot be pushed through the R1/R4
+// bootstrap pattern yet - the native compiler rejects it (46 false E0002 errors, a genuine
+// call-argument-parsing gap in lumenc.lm's self-hosted parser, not a wiring issue). See
+// pipeline.mjs's header comment on emitLlvm/buildAndRunLlvm for the full explanation; that path
+// remains wasm-backed via seed/lumenc.wat, which R5 therefore retains rather than deletes.
 
 // Matches lumenc_native.mjs's patchMainToCompileDriver output layout exactly.
 export const LIT_HEAP_BASE = 488000;

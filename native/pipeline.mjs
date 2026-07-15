@@ -14,17 +14,28 @@
 // goldens were themselves proven against the wasm interpreter before it was retired, so they
 // remain a faithful regression anchor.
 //
-// The ONE exception: emitLlvmWith/emitLlvm/buildAndRunLlvm still touch wasm (see the clearly
-// isolated section near the bottom of this file) - there is no native (clang-built) bootstrap
-// for emit_llvm.lm yet, unlike emit_fn.lm/optimize.lm/lumenc.lm (R1/R4). This is the one
-// deliberately-scoped, honestly-labeled remainder of R5; native/llvm_diff.mjs and
-// native/llvm_float_test.mjs are the only callers, both flagged in the R5 PR body.
+// emitLlvm/buildAndRunLlvm: KNOWN, DOCUMENTED EXCEPTION - still wasm-backed. R1/R4 gave
+// lumenc.lm/emit_fn.lm/optimize.lm native genesis bootstraps; emit_llvm.lm was meant to be the
+// fourth (see the abandoned native/lumellvm_native.mjs attempt in git history for R5). That
+// attempt hit a genuine, currently-undiagnosed lumenc.lm self-hosting bug: the native compiler
+// raises 46 false E0002 ("unknown function") errors on emit_llvm.lm's local variables when they
+// are used as call arguments on the same line as their `let` (e.g. `let reg2 = get_reg() ...
+// num(c, reg2)`), a call-argument-parsing gap distinct from the else-if and c_block()-EOF bugs
+// this same R5 branch found and fixed elsewhere. Root-causing it was judged out of time-box for
+// this PR (see the R5 PR body "Known gaps" section). Consequence: seed/lumenc.wat is RETAINED
+// (NOT deleted) specifically to keep this one path alive - the single deliberate, isolated wasm
+// exception left in the tree, loaded LAZILY below so no other caller of this file ever touches
+// wasm. The ONLY OTHER exception is emitWith's fallback for a non-emit_fn.lm CUSTOM emitter
+// (native/arm64_spike_check.mjs's emit_arm64_spike.lm, an explicitly-labeled "DISPOSABLE
+// SCAFFOLD, spike-only" experiment with exactly one caller) - building a native bootstrap for a
+// disposable one-off spike was judged out of scope; it reuses this same lazy wasm path rather
+// than a sixth bootstrap.
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { execFileSync } from 'node:child_process';
 import wabtInit from 'wabt';
-import { compileToIRNative, compileToIRNativeRaw, optimizeIRNative, getNativeEmitterBin } from './native_compile.mjs';
+import { compileToIRNative, compileToIRNativeRaw, compileToIRNativeResident, optimizeIRNative, getNativeEmitterBin } from './native_compile.mjs';
 import { runLumemitNative } from './lumemit_native.mjs';
 import { buildNativeBinaryFromC } from './lumenc_native.mjs';
 import { createInterpreter, CODE_BASE as INTERP_CODE_BASE } from './ir_interpreter.mjs';
@@ -91,6 +102,16 @@ export function writeSrc(I, src) {
 // a thin native-backed convenience wrapper other functions in this file build on.
 export async function compileToIR(src) {
   const r = compileToIRNative(src);
+  return { words: r.words, main: r.main, irWords: r.words.length, strings: r.strings };
+}
+
+// R3-era name, kept for callers (seed/lumen_mcp.mjs) that already import it: the resident-server
+// compile path, async, warm (no per-call process spawn once warm) - the fast path for MCP tool
+// calls. Same return shape as compileToIR. There is no fallback to select between anymore (R3's
+// "auto" meant native-vs-wat; today there is only native), the name is kept for call-site
+// stability rather than renamed to avoid churn in an already-large diff.
+export async function compileToIRAuto(src) {
+  const r = await compileToIRNativeResident(src);
   return { words: r.words, main: r.main, irWords: r.words.length, strings: r.strings };
 }
 
@@ -170,18 +191,30 @@ export async function buildAndRun(src, opt = '-O2') {
   return buildAndRunFn(src, opt);   // v1 (emit.lm) is retired along with wasm; v2 (emit_fn.lm) is a strict superset (native_diff.mjs's own header confirms this)
 }
 
-// --- the one remaining wasm touch in this repo: emit_llvm.lm has no native bootstrap (R1/R4
-// only covered lumenc/emit_fn/optimize). Isolated to these three functions; callers are exactly
-// native/llvm_diff.mjs, native/llvm_float_test.mjs, and seed/lumen_mcp.mjs's lumen_emit_llvm
-// tool - all named in the R5 PR body as the deliberately-scoped remainder. ---
-const _wat = fs.readFileSync(new URL('../seed/lumenc.wat', import.meta.url), 'utf8');
-const _wabt = await wabtInit();
-const _binary = _wabt.parseWat('lumenc.wat', _wat).toBinary({}).buffer;
+// --- the one remaining wasm touch in this repo: emit_llvm.lm has no native bootstrap (see the
+// header comment at the top of this file for why). Isolated to these functions; callers are
+// exactly native/llvm_diff.mjs, native/llvm_float_test.mjs, native/arm64_spike_check.mjs, and
+// seed/lumen_mcp.mjs's lumen_emit_llvm tool - all named in the R5 PR body as the
+// deliberately-scoped remainder. LAZY: nothing here runs at module load, so the ~45 other callers
+// of this file that never touch LLVM never read seed/lumenc.wat and never pay the wabt init cost
+// (this was a real bug pre-fix: a top-level readFileSync+await here meant ANY importer of this
+// module - nearly everything - crashed on ENOENT the moment lumenc.wat was briefly removed). ---
+let _wasmBinaryPromise = null;
+function _loadWasmBinary() {
+  if (_wasmBinaryPromise) return _wasmBinaryPromise;
+  _wasmBinaryPromise = (async () => {
+    const wat = fs.readFileSync(new URL('../seed/lumenc.wat', import.meta.url), 'utf8');
+    const wabt = await wabtInit();
+    return wabt.parseWat('lumenc.wat', wat).toBinary({}).buffer;
+  })();
+  return _wasmBinaryPromise;
+}
 const EMIT_LLVM_SRC = fs.readFileSync(new URL('./emit_llvm.lm', import.meta.url), 'utf8');
 
 async function _wasmFreshInstance() {
+  const binary = await _loadWasmBinary();
   let out = '';
-  const { instance } = await WebAssembly.instantiate(_binary, {
+  const { instance } = await WebAssembly.instantiate(binary, {
     lumen: { console_print: (p, l) => { out += Buffer.from(new Uint8Array(instance.exports.mem.buffer, p, l)).toString('utf8'); } },
   });
   return { ex: instance.exports, getOut: () => out, resetOut: () => { out = ''; } };
