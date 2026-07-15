@@ -5,17 +5,40 @@
 //
 // R5: the WebAssembly engine is retired. compile() now runs the checked-in, reproducible native
 // compiler (native/lumenc.bootstrap.c, `clang`-built once and cached - see
-// native/native_compile.mjs's compileToIRNativeRaw), a synchronous process-spawn per call
-// (~2ms, measured; the resident IPC server is faster but inherently async, and every caller here
-// needs a synchronous return, so the daemon/MCP hot loop uses the resident server directly via
-// native/native_check.mjs instead - see that file). run()/ir() then execute the resulting IR
+// native/native_compile.mjs's compileToIRNativeRaw). run()/ir() then execute the resulting IR
 // through native/ir_interpreter.mjs: a pure-JS, in-process, zero-wasm port of lumenc.wat's own
 // $run function, restoring the sub-millisecond hot path a per-call clang+exec round trip would
 // have cost (measured 130-500ms/call - see the R5 PR body for the numbers that ruled that out).
+//
+// R5 ADDENDUM: compile() itself no longer pays a process spawn per call once warm. The R3
+// resident compiler server (native/native_compile.mjs's ResidentCompiler, landed PR #65) is
+// wired in through native/resident_sync.mjs's synchronous facade (a lazily-started worker
+// thread + Atomics.wait bridge - see that file's header for why compile() cannot simply
+// `await` the resident server's own async protocol: every caller in the repo - lumen.mjs,
+// lumend.mjs, lumen_mcp.mjs, basics.mjs, the selftest harnesses - depends on compile()/run()/
+// ir() staying plain synchronous functions returning plain objects, never Promises). The
+// original process-spawn path (compileToIRNativeRaw) is kept as the fallback for the rare case
+// the resident bridge fails to start or wedges; see compile() below for the exact switch.
 // Zero-legacy note: this host shim is bootstrap scaffolding, re-derived in Lumen at the
 // self-hosting fixpoint, same as before.
 import { compileToIRNativeRaw } from '../native/native_compile.mjs';
+import { compileToIRResidentSync, stopResidentSyncBridge } from '../native/resident_sync.mjs';
 import { createInterpreter, CODE_BASE as INTERP_CODE_BASE } from '../native/ir_interpreter.mjs';
+
+// Once the resident bridge fails for any reason, stop retrying it for the rest of this process
+// (a fresh process gets a fresh worker + fresh resident child - see resident_sync.mjs).
+let residentBridgeBroken = false;
+let warnedResidentFallback = false;
+function warnResidentFallbackOnce(e) {
+  if (warnedResidentFallback) return;
+  warnedResidentFallback = true;
+  process.stderr.write(`lumen: resident compile bridge unavailable (${e.message}), falling back to the one-shot native compiler for the rest of this process\n`);
+}
+
+// Kill the resident bridge's worker + its resident child promptly on any exit path (belt and
+// braces - see resident_sync.mjs's header comment on why the child cannot outlive this process
+// even without this hook; this just makes the shutdown prompt rather than OS-fd-close-eventual).
+process.on('exit', () => { try { stopResidentSyncBridge(); } catch { /* best effort */ } });
 
 export const SRC_BASE = 100000;
 export const SRC_CAPACITY = 70000;   // SRC region is [100000,170000) (D4: raised from 50000 so lumenc.lm's own growth to compile Dec still self-hosts); a longer source overruns into the SYMBOLS region at 170000
@@ -51,11 +74,12 @@ export function oplen(op) {
 export async function createCompiler() {
   const assembleStart = process.hrtime.bigint();
   // No assemble step anymore (there is no WAT to parse), but keep `assembleMs` meaningful: it is
-  // the fixed cost of getting the native compiler binary ready, paid once per process via
-  // getNativeCompilerBin()'s cache - the very first compile() call below pays it; every caller
-  // that reads lumen.assembleMs (lumend.mjs's warm-log line, lumen_mcp.mjs's startup line) still
-  // gets an honest "how long until warm" number.
-  compileToIRNativeRaw('fn main(c: Console) -> Unit {}\n');   // warm the cached binary build now, not on the caller's first real compile
+  // now the fixed cost of getting the resident bridge (worker thread + resident child) started -
+  // or, if that fails, the one-shot binary cached via getNativeCompilerBin() - paid HERE, not on
+  // the caller's first real compile(). Every caller that reads lumen.assembleMs (lumend.mjs's
+  // warm-log line, lumen_mcp.mjs's startup line) still gets an honest "how long until warm"
+  // number, now honest about the resident bridge's own startup cost too.
+  compile('fn main(c: Console) -> Unit {}\n');
   const assembleMs = Number(process.hrtime.bigint() - assembleStart) / 1e6;
 
   // compile only; returns IR metadata + raw diagnostics (never throws on a user error)
@@ -65,8 +89,14 @@ export async function createCompiler() {
       throw new Error(`source ${srclen}B exceeds SRC capacity ${SRC_CAPACITY}B`);
     }
     let r;
-    try { r = compileToIRNativeRaw(source); }
-    catch (e) { return { ok: false, irWords: 0, main: 0, srclen, rawDiags: [], crash: String(e.message || e) }; }
+    if (!residentBridgeBroken) {
+      try { r = compileToIRResidentSync(source); }
+      catch (e) { residentBridgeBroken = true; warnResidentFallbackOnce(e); }
+    }
+    if (!r) {
+      try { r = compileToIRNativeRaw(source); }
+      catch (e) { return { ok: false, irWords: 0, main: 0, srclen, rawDiags: [], crash: String(e.message || e) }; }
+    }
     return { ok: r.rawDiags.length === 0, irWords: r.words.length, main: r.main, srclen, rawDiags: r.rawDiags,
       tokens: r.tokens, symbols: r.symbols, words: r.words, strings: r.strings };
   }

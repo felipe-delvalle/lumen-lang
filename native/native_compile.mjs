@@ -423,6 +423,23 @@ export async function compileToIRNativeResident(src) {
   return r;
 }
 
+// R5 ADDENDUM: the resident-server counterpart to compileToIRNativeRaw above, matching its
+// EXACT return shape ({ words, main, strings, nerr, rawDiags, tokens, symbols }) - unlike
+// compileToIRNativeResidentRaw (above), which drops the diagnostic records entirely (its callers
+// never needed them). This is what native/resident_sync_worker.mjs calls on behalf of
+// seed/compiler_core.mjs's compile(), so that a resident-backed compile() returns literally the
+// same shape a spawn-backed one always has.
+export async function compileToIRNativeResidentFullRaw(src) {
+  const srcBuf = Buffer.from(src, 'utf8');
+  if (srcBuf.length > SRC_CAP) throw new Error(`source ${srcBuf.length}B exceeds SRC capacity ${SRC_CAP}B`);
+  const server = getResidentCompiler();
+  const payload = await server.compile(src);
+  const { nerr, words, main, literalHeap, records, tokens, symbols } = parseResidentPayload(payload, srcBuf);
+  const strings = stringsFromLiteralHeap(words, literalHeap);
+  const rawDiags = rawDiagsFromRecords(records, srcBuf);
+  return { words, main, strings, nerr, rawDiags, tokens, symbols };
+}
+
 // Compile a .lm source string via the resident native server, returning seed/compiler_core.mjs's
 // compile() shape: { ok, irWords, main, srclen, rawDiags }. A true drop-in for
 // `lumen.compile(source)` at any call site that only needs the compile step (not run/interpret) -
