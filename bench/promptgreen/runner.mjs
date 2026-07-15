@@ -82,6 +82,10 @@ export async function runTask(task, author, opts = {}) {
     const diagCodes = diags.map(d => d.code);
     green = compiled.ok === true;
 
+    // green_solved is filled in below, once we know the hidden-test outcome (only ever true on
+    // the round that also compiled green: solving implies compiling). Every non-green round is
+    // green_solved:false by construction (see PREREGISTRATION_v1.md Definitions: Solved =
+    // green AND hidden_tests.mjs reports green:true).
     const line = {
       task: task.id,
       round,
@@ -90,7 +94,8 @@ export async function runTask(task, author, opts = {}) {
       approx_tokens_in: tokenize(authorInputText),
       approx_tokens_out: tokenize(source),
       diag_codes: diagCodes,
-      green,
+      green_compile: green,
+      green_solved: false,
     };
     jsonl.push(line);
     attempts.push({ round, source, diags, green, stdout: compiled.stdout });
@@ -106,6 +111,8 @@ export async function runTask(task, author, opts = {}) {
     const result = await hidden.run((src) => compiler.run(src), lastSource);
     hiddenGreen = !!result.green;
     hiddenDetail = result.detail ?? null;
+    // patch the green round's JSONL line now that the hidden-test outcome is known
+    jsonl[jsonl.length - 1].green_solved = hiddenGreen;
   }
 
   return {
