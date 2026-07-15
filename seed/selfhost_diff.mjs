@@ -36,6 +36,7 @@ const CONFORMANCE_LIST = [
   '../examples/finance/swap_rate.lm',
   '../mu/examples/arrays.lm',
   '../mu/examples/records.lm',
+  '../mu/examples/decimal.lm',
 ];
 
 // expected match floor: every program here must stay bit-identical or the harness exits 1.
@@ -51,6 +52,8 @@ const CONFORMANCE_LIST = [
 // compiler; every seed front-end feature now compiles bit-identically under lumenc.lm.
 // bump_greeks (finite-difference Greeks kernel) joined: 28/28.
 // swap_rate (par interest-rate swap kernel with discount factors) joined: 29/29.
+// decimal (D4: Dec end-to-end, literals/coercion/dec_div/dec_to_text/dec_to_float/overflow-
+// free happy-path kernel) joins with the self-hosted compiler's Dec front-end: 30/30.
 const EXPECTED_MATCH = [
   '../mu/examples/fib_print.lm',
   '../mu/examples/add.lm',
@@ -81,6 +84,7 @@ const EXPECTED_MATCH = [
   '../examples/finance/swap_rate.lm',
   '../mu/examples/arrays.lm',
   '../mu/examples/records.lm',
+  '../mu/examples/decimal.lm',
 ];
 
 async function main() {
