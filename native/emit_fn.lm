@@ -979,7 +979,7 @@ static void lm_printtext(int64_t a) {
     if op == 13 { c.print("__attribute__((always_inline)) ") emit_sig(c, pc) c.print(";\n") }
     if op == 57 { pc = pc + 3 + ir_word(pc + 1) } else { pc = pc + 1 + oplen(op) }
   }
-  c.print("int main(void){setvbuf(stdout,0,_IONBF,0);")
+  c.print("int main(void){setvbuf(stdout,0,_IOFBF,65536);")
   if fuel_mode() == 1 { c.print("lm_fuel_reset();") }
   c.print("f") num(c, ir_main()) c.print("();return 0;}\n")
   emit_bodies(c)
