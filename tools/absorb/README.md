@@ -17,6 +17,12 @@ with the repo's standing discipline: an executable oracle and a frozen, tamper-e
    only at the moment of absorption, never in CI. Editing an absorbed kernel breaks the sha
    pin; editing a fixture's expectations breaks the comparison; either turns CI red until a
    deliberate re-absorption against the live oracle re-pins it.
+4. Absorbed results RUN AS NATIVE LUMEN CODE, and that is verified, not assumed: both the
+   acceptance run and every fixture re-check execute the kernel twice, once on the
+   interpreter and once through the full native toolchain (native compile, native optimize,
+   emit_fn C, clang -O2, execute), and BOTH must reproduce the oracle. Absorbed kernels are
+   not census members, so this leg is what extends the repo's interpreter==native guarantee
+   to them.
 
 ## Usage
 

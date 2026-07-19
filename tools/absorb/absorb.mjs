@@ -119,6 +119,17 @@ async function runLumen(source) {
   return r.stdout.split('\n').filter((l) => l.length > 0);
 }
 
+// The native leg of the contract: an absorbed kernel is only accepted (and only stays
+// green in CI) if it reproduces the oracle THROUGH THE NATIVE TOOLCHAIN as well - native
+// compile -> native optimize -> emit_fn C -> clang -O2 -> execute. Absorbed kernels are
+// not census members, so this is what extends the interpreter==native guarantee to them.
+async function runLumenNative(source) {
+  const { buildAndRunFn } = await import(path.join(REPO_ROOT, 'native', 'pipeline.mjs'));
+  const r = await buildAndRunFn(source);
+  if (r.exit !== 0) throw new Error(`native driver exited ${r.exit}`);
+  return r.stdout.split('\n').filter((l) => l.length > 0);
+}
+
 function runPythonOracle(pyPath, fnName, inputs, ret) {
   const abs = path.resolve(pyPath);
   const rows = inputs.map((row) => row.map((a) => a.value));
@@ -168,7 +179,14 @@ export async function absorb({ pyPath, fnName, candidatePath, n = 200, seed = 42
   const driver = lumenDriver(candidateSource, fnName, inputs, sig.ret);
   const lumenLines = await runLumen(driver);
   const { lines: oracleLines, pyver } = runPythonOracle(pyPath, fnName, inputs, sig.ret);
-  const verdict = compare(lumenLines, oracleLines, inputs);
+  let verdict = compare(lumenLines, oracleLines, inputs);
+  if (verdict.ok) {
+    const nativeLines = await runLumenNative(driver);
+    const nativeVerdict = compare(nativeLines, oracleLines, inputs);
+    verdict = nativeVerdict.ok
+      ? { ok: true, detail: `${verdict.detail}, interpreter AND native toolchain` }
+      : { ok: false, detail: `interpreter matched but NATIVE diverged: ${nativeVerdict.detail}` };
+  }
   return { sig, inputs, lumenLines, oracleLines, pyver, verdict, candidateSource };
 }
 
@@ -205,7 +223,12 @@ export async function checkFixture(fixturePath) {
   const inputs = fx.inputs.map((row) => row.map((v, i) => ({ type: fx.signature.params[i].type, value: v })));
   const driver = lumenDriver(candidateSource, fx.fn, inputs, fx.signature.ret);
   const lumenLines = await runLumen(driver);
-  return compare(lumenLines, fx.expected, inputs);
+  const interp = compare(lumenLines, fx.expected, inputs);
+  if (!interp.ok) return { ok: false, detail: `interpreter: ${interp.detail}` };
+  const nativeLines = await runLumenNative(driver);
+  const native = compare(nativeLines, fx.expected, inputs);
+  if (!native.ok) return { ok: false, detail: `NATIVE toolchain: ${native.detail}` };
+  return { ok: true, detail: `${interp.detail}, interpreter AND native toolchain` };
 }
 
 function parseArgs(argv) {
