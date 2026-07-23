@@ -227,6 +227,7 @@ regression; the Forge adds adversarial coverage. The full gate list run by `.git
 - `native_fn_test.mjs`
 - `native_float_test.mjs`
 - `native_decimal_test.mjs`
+- `native_buffered_stdout_test.mjs`
 - `llvm_diff.mjs`
 - `llvm_float_test.mjs`
 - `llvm_decimal_test.mjs`
