@@ -12,8 +12,8 @@ byte-identical output against the reference interpreter on a fixed conformance c
 
 This repository is the project's home: the full toolchain (the bootstrap-C genesis + in-process
 interpreter that replaced the WAT reference seed as the live oracle in R5, the self-hosting
-`lumenc.lm`, the C and LLVM native emitters, the IR optimizer, the warm daemon and MCP authoring
-tools) and the conformance corpus live here. Its history is the complete,
+`lumenc.lm`, the C and LLVM native emitters, the IR optimizer, the warm daemons (interpreted and
+native) and MCP authoring tools) and the conformance corpus live here. Its history is the complete,
 audited development record extracted from the private development monorepo where the language
 was bootstrapped; see [docs/PROVENANCE.md](docs/PROVENANCE.md) for the extraction and safety
 audit. The methodology paper ("Oracle-Gated Self-Hosting: Building a Programming Language with
@@ -37,6 +37,9 @@ directory holds forward-looking programs that exercise not-yet-landed syntax.)
 - [`docs/ROADMAP_2036.md`](docs/ROADMAP_2036.md): the plan of record.
 - [`RULES.md`](RULES.md): the operating laws and the canonical metric names.
 - [`bench/scoreboard.json`](bench/scoreboard.json) and [`bench/DASHBOARD.md`](bench/DASHBOARD.md): the live verdicts and numbers.
+- [`bench/vs-c/SCOREBOARD.md`](bench/vs-c/SCOREBOARD.md): matched-kernel timings against real C (`-O3`), gated on byte-identical output first.
+- [`tools/absorb/README.md`](tools/absorb/README.md): the oracle-gated contract for absorbing foreign (Python, C, C++) functions with a live, executed, sha-pinned oracle.
+- [`docs/SIMD_AUTOVECTORIZATION_PLAN.md`](docs/SIMD_AUTOVECTORIZATION_PLAN.md): what Lumen gets for free from clang/LLVM's own auto-vectorizer today, and the staged plan for closing the rest of the gap.
 - [`SELFHOST_CAMPAIGN_LOG.md`](SELFHOST_CAMPAIGN_LOG.md) and [`docs/VELOCITY_LEDGER.md`](docs/VELOCITY_LEDGER.md): the receipts.
 - [`LANGUAGE.md`](LANGUAGE.md) and [`ARCHITECTURE.md`](ARCHITECTURE.md): the language and the repo, as they are today.
 

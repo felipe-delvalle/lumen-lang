@@ -120,8 +120,16 @@ literal heap out), `lumemit` (framed IR in, C out - the emitter compiled by itse
 pipe's C for the compiler is byte-identical to the seed path, and a generation-2 compiler binary
 built from that output (no seed emit in the loop) produces byte-identical output on the compiler
 source and the whole corpus. Measured at compiler scale: the native compile stage runs ~23x faster
-than the interpreted self-hosted compiler (spawn included; ~59x work-only); the emit stage ~3-4x
-(currently bound by unbuffered per-token output, the next speed item). The emitted runtime's heap
+than the interpreted self-hosted compiler (spawn included; ~59x work-only); the emit stage's earlier
+~3-4x ceiling was the unbuffered-stdout bottleneck, closed by buffering emitted output (64KB,
+`fflush` preserved ahead of every trap/exit path) so the printed-output path no longer dominates.
+Repeat native compiles additionally reuse a warm resident compiler process (`native/native_compile.mjs`'s
+`ResidentCompiler`, wired into the correctness-checking gates) instead of paying a fresh process
+spawn per invocation, and `native/lumend_native.mjs` exposes that same warm process as a persistent
+Unix-socket daemon for external callers: measured 5.7-7.6x over a cold one-shot native-binary spawn,
+and two orders of magnitude over a cold `clang`/`gcc` compile of comparable source (`native/lumend_vs_cc_bench.mjs`;
+that comparison is disclosed as unequal-work - Lumen source to raw IR in a warm process vs. C to a
+linked binary, cold - a developer-facing latency claim, not an equal-work throughput one). The emitted runtime's heap
 mirrors the interpreter faithfully: one shared cursor, arrays/sums guarded at the interpreter's
 logical bound (halt-parity gated), text free to the physical arena. The reference oracle is now the
 bootstrap-C trio + `native/ir_interpreter.mjs` (see "The seed" above); the wasm-era seed the
@@ -202,11 +210,35 @@ not ship as the real artifact:
 
 - `seed/compiler_core.mjs` - a warm, reusable compile/run/ir surface over the assembled seed.
 - `seed/lumen.mjs` - the CLI (`run` / `check` / `ir`).
-- `seed/lumend.mjs` - the warm Unix-socket daemon (sub-millisecond compiles).
+- `seed/lumend.mjs` - the warm Unix-socket daemon over the interpreter (sub-millisecond compiles).
+- `native/lumend_native.mjs` - the analogous warm Unix-socket daemon over the native, resident
+  compiler process (see "The native fixpoint is achieved and gated" above for the measured
+  speedup); same newline-delimited-JSON protocol shape as `seed/lumend.mjs`.
 - `seed/lumen_serve.mjs` - the TCP socket seam for `http_serve.lm`: binds a port, hands each
   connection's bytes to the kernel, writes back the response the kernel built.
 - `seed/lumen_mcp.mjs` - the MCP server exposing the full compiler to LLM clients (check, fix, run,
   ir, explain, tokens, types, optimize, emit_c, emit_llvm).
+
+## Cross-language verification (`tools/absorb/`)
+
+Rather than reimplement a foreign library function on faith, `absorb` executes the real foreign
+implementation (CPython, or now a C/C++ oracle compiled via a discovered `gcc`/`g++`/`clang`/`clang++`,
+preferring the cloned reference toolchains when a prebuilt binary is available) against a
+deterministic seeded input set, and freezes the oracle's real outputs into a fixture pinned by sha256
+(candidate source, oracle source, oracle version, seed, input ranges). CI (`tools/absorb/absorb_gate.mjs`)
+re-verifies every absorbed kernel against its frozen fixture with no foreign runtime needed; the
+acceptance run and every fixture re-check compile the candidate through the interpreter AND the full
+native toolchain, both required to reproduce the oracle. See `tools/absorb/README.md` for the full
+contract, including the v1 scope limits.
+
+## Benchmarking against other languages (`bench/vs-c/`)
+
+A matched-kernel scoreboard racing Lumen's native output against real C compiled with `-O3` (the
+cloned `gcc`/`llvm` sources when a prebuilt binary is available there, else the system compiler,
+disclosed either way): four kernel pairs (recursive call, matrix multiply, insertion sort, an
+open-addressing hash probe), gated `G0` on byte-identical stdout before any timing is trusted.
+Real measured results and the exact compiler versions used are in `bench/vs-c/SCOREBOARD.md`, not
+asserted here since they will drift as the toolchain improves.
 
 ## The Forge (`forge/`)
 

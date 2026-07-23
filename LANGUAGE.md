@@ -40,6 +40,7 @@ Functions may be defined in **any order**: forward references and mutual recursi
 - **Result** (built-in generic): `Result[T, E]` represents success `Ok(value: T)` or failure `Err(error: E)`. Use with the `?` operator.
 - **Records** (user-defined): `type Point = { x: Float, y: Float }` creates a struct. Construct with `Point { x: 1.0, y: 2.0 }` and access fields with dot notation (`p.x`).
 - **Float arrays** (heap-backed): `array(n)` allocates an array of `n` floats; `aget(arr, i)` reads index `i`; `aset(arr, i, v)` writes; `alen(arr)` returns the length.
+- **Int arrays** (heap-backed): `iarray(n)` / `iaget(arr, i)` / `iaset(arr, i, v)` / `ialen(arr)`, the same builtins as Float arrays but element-typed `Int`. Both share the same raw i64-slot heap runtime (opcodes ANEW/AGET/ASET/ALEN); `iarray`/`array` differ only in the front-end's recorded element type, so an `Int` array can express algorithms (e.g. comparison-based sorts) that would silently reinterpret bits if written against a `Float` array.
 
 - `Bool` (B1): a distinct type, not an Int alias. Literals: `true`, `false`. A comparison (`a < b`, `a == b`, ...) produces a `Bool`, which `if`, `while`, `and`, `or`, and `not` require. `Bool` never implicitly or explicitly coerces to/from `Int` (or `Float`/`Dec`): `if x` where `x` is an `Int` is a compile-time error (E0009), not a truthiness test. `==`/`!=` between two `Bool` values is allowed; ordering comparisons (`<`, `<=`, `>`, `>=`) and arithmetic (`+`, `-`, `*`, `/`) on `Bool` are not.
 
@@ -399,7 +400,6 @@ fn main(console: Console) -> Unit {
 - Generics (except `Result`).
 - Imports and modules.
 - I/O beyond `console.print` (no file I/O, sockets, network).
-- Boolean literals (`true` / `false`). Use comparisons and `if` instead.
 - Tuple types (only tuple pattern matching in `match`).
 - Inheritance, traits, or method definitions.
 - String interpolation (use `text_concat` and `int_to_text`).
