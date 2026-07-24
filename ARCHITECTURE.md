@@ -238,7 +238,26 @@ cloned `gcc`/`llvm` sources when a prebuilt binary is available there, else the 
 disclosed either way): four kernel pairs (recursive call, matrix multiply, insertion sort, an
 open-addressing hash probe), gated `G0` on byte-identical stdout before any timing is trusted.
 Real measured results and the exact compiler versions used are in `bench/vs-c/SCOREBOARD.md`, not
-asserted here since they will drift as the toolchain improves.
+asserted here since they will drift as the toolchain improves. (Extending this to Rust and Python
+twins is a natural next step, not yet built - see `bench/authorship/` below for the benchmark that
+actually matters more to the project's claim.)
+
+## The actual moat: `tokens-to-green`, not raw execution speed (`bench/authorship/`)
+
+Raw execution speed is parity with C/Rust, not a blowout (see above) - that is not the claim this
+project stakes its identity on. The claim (`VISION_2036.md` row 9, `RULES.md`'s single sentence:
+"Lumen wins by being the shortest, tightest, most trustworthy path from a human's intent to a
+proven running binary, for a model writing it") is about the cost of getting an AI-authored program
+from a prompt to verified-correct: `tokens-to-green` and `rounds-to-green`, not execution
+milliseconds. `bench/authorship/` is the corpus that measures this directly - a growing set of
+tasks, each authored from scratch (no reference code shown) in Lumen and in rival languages,
+with real, honestly-reported results including runs where Lumen did not win (see
+`bench/authorship/tasks/black_scholes_call/RESULTS.md` for the first pilot: Python won on raw
+tokens-to-green on that task, while Lumen compiled clean on every attempt with zero diagnostics
+fired - the extra rounds were a self-inflicted output bug, a real and reported finding, not
+smoothed over). This is `docs/AI_FEEDBACK_LOOP.md` section 3's benchmark actually standing, feeding
+the row 9 verdict in `VISION_2036.md`, which stays `Winnable, not yet won` until the corpus is wide
+enough to be more than a pilot.
 
 ## The Forge (`forge/`)
 
